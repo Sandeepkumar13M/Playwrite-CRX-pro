@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>POM Recorder</title>
+<style>
+  :root{
+    --bg:#f5f5f7; --card:#ffffff; --ink:#1d1d1f; --mut:#86868b;
+    --line:#e8e8ed; --acc:#0a84ff; --acc-soft:#eaf3ff; --rec:#ff3b30;
+    --np-red:#ff3b30; --nth-black:#111111; --nth-gray:#f1f1f3;
+    --green:#34c759; --purple:#af52de; --radius:16px;
+    --sans:-apple-system,BlinkMacSystemFont,'SF Pro Display','Segoe UI',sans-serif;
+    --mono:'SF Mono',ui-monospace,'Cascadia Code',monospace;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:var(--sans);background:var(--bg);color:var(--ink);
+    font-size:14px;height:100vh;display:flex;flex-direction:column;overflow:hidden;
+    -webkit-font-smoothing:antialiased}
+  .top{padding:18px 18px 14px;display:flex;align-items:center;gap:12px}
+  .logo{width:34px;height:34px;border-radius:10px;background:var(--ink);display:grid;place-items:center;flex-shrink:0}
+  .logo svg{width:18px;height:18px;fill:#fff}
+  .title{font-size:17px;font-weight:600;letter-spacing:-.3px}
+  .status{margin-left:auto;font-size:12px;color:var(--mut);display:flex;align-items:center;gap:6px}
+  .pulse{width:8px;height:8px;border-radius:50%;background:var(--mut)}
+  .pulse.on{background:var(--rec);animation:beat 1.3s infinite}
+  @keyframes beat{0%,100%{opacity:1}50%{opacity:.35}}
+  .recwrap{padding:4px 18px 14px}
+  .rec{width:100%;border:none;border-radius:12px;padding:12px 14px;font-size:14px;font-weight:700;font-family:var(--sans);color:#fff;background:var(--np-red);cursor:pointer;transition:transform .12s,background .2s;letter-spacing:-.1px}
+  .rec:active{transform:scale(.98)}
+  .rec.on{background:var(--ink)}
+  .mini{display:flex;gap:8px;margin-top:8px}
+  .mini button{flex:1;border:none;border-radius:11px;padding:10px;font-size:11.5px;font-weight:700;font-family:var(--mono);text-transform:uppercase;letter-spacing:.45px;color:var(--ink);background:var(--card);cursor:pointer;transition:transform .12s;box-shadow:0 1px 2px rgba(0,0,0,.04)}
+  .mini button:active{transform:scale(.97)}
+  .mini button.armed{background:var(--acc);color:#fff}
+  #pick{background:#1f1f22;color:#fff}
+  #detect{background:#0a84ff;color:#fff}
+  #isVisible{background:#6e56cf;color:#fff}
+  #clear{background:var(--np-red);color:#fff}
+  #pick:active,#detect:active,#isVisible:active,#clear:active{filter:brightness(.95)}
+  .sheet{margin:0 18px 14px;background:var(--card);border-radius:var(--radius);padding:2px 14px;box-shadow:0 1px 3px rgba(0,0,0,.05)}
+  .row{display:flex;align-items:center;padding:10px 0;border-bottom:1px solid var(--line)}
+  .row:last-child{border-bottom:none}
+  #rowClass{padding:7px 0}
+  #rowWaitStyle{border-bottom:none}
+  #rowState{border-bottom:none}
+  #rowTimeout{border-top:1px solid var(--line)}
+  .row label.k{font-size:13.5px;color:var(--ink);flex:1;font-weight:450}
+  .pillgroup{display:flex;flex-wrap:wrap;background:var(--bg);border-radius:9px;padding:2px}
+  .pillgroup label{position:relative;cursor:pointer}
+  .pillgroup input{position:absolute;opacity:0}
+  .pillgroup span{display:block;padding:6px 11px;font-size:12px;border-radius:7px;color:var(--mut);transition:.18s;font-weight:500;white-space:nowrap}
+  .pillgroup label:has(input:checked) span{background:var(--card);color:var(--ink);box-shadow:0 1px 3px rgba(0,0,0,.1)}
+  #selectorGroup{gap:4px;background:var(--nth-gray);padding:4px;border-radius:12px}
+  #selectorGroup span{background:transparent;border:1px solid #dedee2;color:#6b6b72;font-weight:600}
+  #selectorGroup label:has(input:checked) span{
+    background:var(--np-red);
+    color:#fff;
+    border-color:var(--np-red);
+    box-shadow:none;
+  }
+  #selectorLabel{font-weight:650;color:var(--nth-black)}
+  .cls-input,.num{border:none;background:var(--bg);border-radius:9px;padding:6px 10px;font-family:var(--mono);font-size:12px;color:var(--ink);text-align:right}
+  .cls-input{flex:0 0 128px;text-align:left}
+  .num{width:84px}
+  .scroll{flex:1;overflow-y:auto;padding:0 18px}
+  .sec{font-size:12px;color:var(--mut);font-weight:600;text-transform:uppercase;letter-spacing:.4px;margin:6px 4px 8px}
+  .empty{text-align:center;color:var(--mut);padding:46px 24px;font-size:13.5px;line-height:1.6}
+  .empty b{color:var(--rec)}
+  .step{background:var(--card);border-radius:var(--radius);padding:14px;margin-bottom:10px;box-shadow:0 1px 3px rgba(0,0,0,.05);animation:rise .25s cubic-bezier(.2,.8,.2,1)}
+  @keyframes rise{from{opacity:0;transform:translateY(6px)}}
+  .step.detect{outline:2px solid var(--acc);outline-offset:-1px}
+  .step-top{display:flex;align-items:center;gap:9px;margin-bottom:9px}
+  .chip{font-size:11px;font-weight:700;padding:3px 9px;border-radius:7px;letter-spacing:.2px}
+  .c-click{background:var(--acc-soft);color:var(--acc)}
+  .c-fill,.c-fill_rich{background:#e7faec;color:var(--green)}
+  .c-check,.c-uncheck,.c-select{background:#f6ebfb;color:var(--purple)}
+  .c-detect{background:var(--acc-soft);color:var(--acc)}
+  .num-badge{margin-left:auto;font-size:12px;color:var(--mut)}
+  .del{border:none;background:none;color:var(--mut);font-size:18px;cursor:pointer;padding:0 2px;line-height:1}
+  .del:active{color:var(--rec)}
+  .sel{font-family:var(--mono);font-size:12px;color:var(--ink);line-height:1.5;word-break:break-all;background:var(--bg);border-radius:9px;padding:8px 10px}
+  .frame-tag{display:inline-block;font-family:var(--sans);font-size:11px;color:var(--purple);background:#f6ebfb;border-radius:6px;padding:1px 7px;margin-bottom:7px;font-weight:600}
+  .ctrls{display:flex;gap:7px;margin-top:10px;flex-wrap:wrap}
+  .ctrls select{flex:1;min-width:90px;border:none;background:var(--bg);border-radius:9px;padding:8px 9px;font-family:var(--sans);font-size:12px;color:var(--ink);cursor:pointer}
+  .detect-toggle{display:flex;align-items:center;gap:7px;margin-top:10px;padding-top:10px;border-top:1px solid var(--line)}
+  .detect-toggle span{font-size:12.5px;color:var(--ink);flex:1}
+  .sw{position:relative;width:42px;height:25px;flex-shrink:0}
+  .sw input{opacity:0;width:0;height:0}
+  .sw .track{position:absolute;inset:0;background:#e3e3e8;border-radius:25px;transition:.22s;cursor:pointer}
+  .sw .track:before{content:"";position:absolute;width:21px;height:21px;left:2px;top:2px;background:#fff;border-radius:50%;transition:.22s;box-shadow:0 1px 3px rgba(0,0,0,.25)}
+  .sw input:checked + .track{background:var(--acc)}
+  .sw input:checked + .track:before{transform:translateX(17px)}
+  .out{position:relative;background:var(--card);border-top:1px solid var(--line);display:flex;flex-direction:column;max-height:44vh;transition:max-height .2s ease}
+  .out.collapsed{max-height:46px}
+  .out.collapsed pre{display:none}
+  .out-toggle{position:absolute;right:10px;bottom:8px;border:none;background:var(--bg);color:var(--mut);
+    width:24px;height:24px;border-radius:8px;cursor:pointer;font-size:14px;line-height:1}
+  .out-toggle:hover{color:var(--ink)}
+  .out-top{display:flex;align-items:center;gap:8px;padding:13px 18px 10px}
+  .out-top .fn{font-family:var(--mono);font-size:12px;color:var(--mut);flex:1}
+  .out-top button{border:none;border-radius:9px;padding:7px 14px;font-size:12.5px;font-weight:600;font-family:var(--sans);cursor:pointer;transition:transform .12s}
+  .out-top button:active{transform:scale(.95)}
+  .b-copy{background:var(--acc);color:#fff}
+  .b-dl{background:var(--bg);color:var(--ink)}
+  pre{flex:1;overflow:auto;padding:0 18px 16px;margin:0;font-size:12px;line-height:1.6;font-family:var(--mono);white-space:pre;color:var(--ink)}
+  .kw{color:#9b2393}.str{color:#c41a16}.cls{color:#3900a0}.cm{color:#8e8e93}
+  ::-webkit-scrollbar{width:7px;height:7px}
+  ::-webkit-scrollbar-thumb{background:#d0d0d5;border-radius:4px}
+</style>
+</head>
+<body>
+  <div class="top">
+    <div class="logo"><svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg></div>
+    <div class="title">POM Recorder</div>
+    <div class="status"><span class="pulse" id="pulse"></span><span id="statusTxt">Idle</span></div>
+  </div>
+  <div class="recwrap">
+    <button class="rec" id="rec">Record</button>
+    <div class="mini"><button id="pick">Pick element</button><button id="detect">Detect state</button><button id="isVisible">Is visible</button><button id="clear">Clear all</button></div>
+  </div>
+  <div class="sheet">
+    <div class="row" id="rowClass"><label class="k">Class name</label><input class="cls-input" id="className" value="GeneratedState" spellcheck="false" /></div>
+    <div class="row">
+      <label class="k" id="selectorLabel">Selector</label>
+      <div class="pillgroup" id="selectorGroup">
+        <label><input type="radio" name="sel" value="text" checked><span>text</span></label>
+        <label><input type="radio" name="sel" value="role"><span>role</span></label>
+        <label><input type="radio" name="sel" value="label"><span>label</span></label>
+        <label><input type="radio" name="sel" value="placeholder"><span>placeholder</span></label>
+        <label><input type="radio" name="sel" value="alt_text"><span>alt_text</span></label>
+        <label><input type="radio" name="sel" value="title"><span>title</span></label>
+        <label><input type="radio" name="sel" value="test_id"><span>test_id</span></label>
+        <label><input type="radio" name="sel" value="css"><span>css</span></label>
+        <label><input type="radio" name="sel" value="xpath"><span>xpath</span></label>
+      </div>
+    </div>
+  </div>
+  <div class="scroll" id="scroll">
+    <div class="sec">Steps</div>
+    <div class="empty" id="empty">
+      Tap <b>Record</b> and interact with the page.<br>
+      Toggle <b style="color:var(--acc)">detect&nbsp;state</b> on any step<br>
+      to make it the state detector.
+    </div>
+  </div>
+  <div class="out">
+    <div class="out-top"><span class="fn" id="fnLabel">code_snap.py</span><button class="b-dl" id="download">Save</button><button class="b-copy" id="copy">Copy</button></div>
+    <pre id="code"></pre>
+    <button id="outToggle" class="out-toggle" title="Collapse output">⌵</button>
+  </div>
+  <script src="codegen.js"></script>
+  <script src="panel.js"></script>
+</body>
+</html>
