@@ -296,15 +296,18 @@
   let hoverBox = null;
   function ensureBox() {
     if (hoverBox) return hoverBox;
+    const root = document.documentElement || document.body;
+    if (!root) return null;
     hoverBox = document.createElement('div');
     hoverBox.style.cssText =
       'position:fixed;z-index:2147483647;pointer-events:none;border:2px solid #ff5c38;' +
       'background:rgba(255,92,56,.12);border-radius:3px;transition:all .05s;display:none;';
-    (document.documentElement || document.body).appendChild(hoverBox);
+    root.appendChild(hoverBox);
     return hoverBox;
   }
   function highlight(el) {
     const b = ensureBox();
+    if (!b) return;
     const r = el.getBoundingClientRect();
     b.style.display = 'block';
     b.style.left = r.left + 'px'; b.style.top = r.top + 'px';
