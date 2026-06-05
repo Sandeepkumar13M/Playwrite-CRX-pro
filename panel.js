@@ -1,10 +1,27 @@
 // panel.js — UI controller (BaseState style)
-const state = { recording: false, steps: [] };
+const state = { recording: false, paused: false, steps: [] };
 const $ = (id) => document.getElementById(id);
 const pulse = $('pulse'), statusTxt = $('statusTxt'), recBtn = $('rec');
 const scroll = $('scroll'), emptyEl = $('empty'), codeEl = $('code');
-const outEl = document.querySelector('.out');
-const isExtensionRuntime = !!(window.chrome && chrome.runtime && chrome.runtime.sendMessage);
+const detectCodeEl = $('detectCode');
+const isVisibleCodeEl = $('isVisibleCode');
+const pickCodeEl = $('pickCode');
+const pauseBtn = $('pause');
+const mainOut = $('mainOut');
+const detectCard = $('detectCard');
+const visibleCard = $('visibleCard');
+const pickCard = $('pickCard');
+
+function getRuntime() {
+  try {
+    const c = (typeof window !== 'undefined' && window) ? window['chrome'] : null;
+    if (c && c.runtime) return c.runtime;
+  } catch (_) {}
+  return null;
+}
+
+const runtime = getRuntime();
+const isExtensionRuntime = !!(runtime && runtime.sendMessage);
 
 function selectorKey(step) {
   const role = step.selector?.role || {};
@@ -14,9 +31,10 @@ function selectorKey(step) {
 }
 
 function opts() {
+  const classNameEl = $('className');
   return {
     sel: document.querySelector('input[name=sel]:checked').value,
-    className: $('className').value.trim() || 'GeneratedState',
+    className: classNameEl ? (classNameEl.value.trim() || 'GeneratedState') : 'GeneratedState',
   };
 }
 
@@ -24,9 +42,29 @@ function syncUI() {
   // no-op: wait/timeout controls removed
 }
 
+function setRecordingUI() {
+  recBtn.classList.toggle('on', state.recording);
+  recBtn.textContent = state.recording ? 'Stop' : 'Record';
+  pulse.classList.toggle('on', state.recording && !state.paused);
+  if (pauseBtn) {
+    pauseBtn.disabled = !state.recording;
+    pauseBtn.classList.toggle('active', state.paused);
+    pauseBtn.textContent = state.paused ? 'Resume' : 'Pause';
+  }
+  if (!state.recording) {
+    statusTxt.textContent = 'Idle';
+  } else {
+    statusTxt.textContent = state.paused ? 'Paused' : 'Recording';
+  }
+}
+
 function send(cmd) {
-  if (!isExtensionRuntime) return false;
-  chrome.runtime.sendMessage({ from: 'panel', type: 'CMD', cmd });
+  if (!runtime || !runtime.sendMessage) return false;
+  try {
+    runtime.sendMessage({ from: 'panel', type: 'CMD', cmd });
+  } catch (_) {
+    return false;
+  }
   return true;
 }
 
@@ -35,13 +73,26 @@ recBtn.addEventListener('click', () => {
     statusTxt.textContent = 'Preview mode (no recording)';
     return;
   }
-  state.recording = !state.recording;
-  recBtn.classList.toggle('on', state.recording);
-  recBtn.textContent = state.recording ? 'Stop' : 'Record';
-  pulse.classList.toggle('on', state.recording);
-  statusTxt.textContent = state.recording ? 'Recording' : 'Idle';
-  send(state.recording ? 'start' : 'stop');
+  if (!state.recording) {
+    state.recording = true;
+    state.paused = false;
+    send('start');
+  } else {
+    state.recording = false;
+    state.paused = false;
+    send('stop');
+  }
+  setRecordingUI();
 });
+
+if (pauseBtn) {
+  pauseBtn.addEventListener('click', () => {
+    if (!isExtensionRuntime || !state.recording) return;
+    state.paused = !state.paused;
+    send(state.paused ? 'pause' : 'resume');
+    setRecordingUI();
+  });
+}
 
 $('pick').addEventListener('click', () => {
   if (!isExtensionRuntime) {
@@ -80,8 +131,8 @@ $('clear').addEventListener('click', () => {
   render();
 });
 
-if (window.chrome && chrome.runtime && chrome.runtime.onMessage) {
-  chrome.runtime.onMessage.addListener((msg) => {
+if (runtime && runtime.onMessage && runtime.onMessage.addListener) {
+  runtime.onMessage.addListener((msg) => {
     if (!msg) return;
 
     if (msg.type === 'ACTION' && msg.action && msg.relayedByBackground) {
@@ -89,7 +140,13 @@ if (window.chrome && chrome.runtime && chrome.runtime.onMessage) {
       if (!a.selStrategy) a.selStrategy = opts().sel;
 
       if (a.verb === 'detect') {
-        state.steps = state.steps.filter(s => s.verb !== 'detect');
+        state.steps.push(a);
+      } else if (a.verb === 'pick') {
+        state.steps.push(a);
+        if (a.html) {
+          navigator.clipboard.writeText(a.html).catch(() => {});
+        }
+      } else if (a.verb === 'is_visible') {
         state.steps.push(a);
       } else {
         const isFillVerb = a.verb === 'fill' || a.verb === 'fill_rich';
@@ -110,12 +167,12 @@ if (window.chrome && chrome.runtime && chrome.runtime.onMessage) {
     if (msg.type === 'DETECT_DONE' && msg.relayedByBackground) {
       detectBtn.classList.remove('armed');
       detectBtn.textContent = 'Detect state';
-      statusTxt.textContent = state.recording ? 'Recording' : 'Idle';
+      setRecordingUI();
     }
     if (msg.type === 'IS_VISIBLE_DONE' && msg.relayedByBackground) {
       isVisibleBtn.classList.remove('armed');
       isVisibleBtn.textContent = 'Is visible';
-      statusTxt.textContent = state.recording ? 'Recording' : 'Idle';
+      setRecordingUI();
     }
   });
 }
@@ -131,7 +188,7 @@ function selHtml(arr, i, key, cur) {
 }
 
 function render() {
-  emptyEl.style.display = state.steps.length ? 'none' : 'block';
+  emptyEl.style.display = 'none';
   scroll.querySelectorAll('.step').forEach(n => n.remove());
 
   state.steps.forEach((step, i) => {
@@ -168,7 +225,6 @@ function render() {
     div.innerHTML = `
       <div class="step-top">
         <span class="chip c-${step.verb}">${step.verb}</span>
-        <span class="num-badge">#${i + 1}</span>
         <button class="del" data-i="${i}">×</button>
       </div>
       ${frame}
@@ -222,13 +278,23 @@ function regen() {
   if (!window.PWCodegen || !PWCodegen.generatePlaywright || !PWCodegen.highlight) {
     const msg = '# codegen.js not loaded in this preview context';
     codeEl.textContent = msg;
+    if (detectCodeEl) detectCodeEl.textContent = msg;
+    if (isVisibleCodeEl) isVisibleCodeEl.textContent = msg;
+    if (pickCodeEl) pickCodeEl.textContent = msg;
     state._code = msg;
     return;
   }
-  const { snap } = PWCodegen.generatePlaywright(state.steps, opts());
+  const { snap, detectSnap, isVisibleSnap, pickSnap } = PWCodegen.generatePlaywright(state.steps, opts());
   codeEl.innerHTML = PWCodegen.highlight(snap || '');
+  if (detectCodeEl) detectCodeEl.innerHTML = PWCodegen.highlight(detectSnap || '');
+  if (isVisibleCodeEl) isVisibleCodeEl.innerHTML = PWCodegen.highlight(isVisibleSnap || '');
+  if (pickCodeEl) pickCodeEl.textContent = pickSnap || '<!-- no picked element yet -->';
   state._code = snap || '';
+  state._detectSnap = detectSnap || '';
+  state._isVisibleSnap = isVisibleSnap || '';
+  state._pickSnap = pickSnap || '';
   $('fnLabel').textContent = 'code_snap.py';
+  autoGrowBlocks();
 }
 
 document.querySelectorAll('.sheet input').forEach(el =>
@@ -238,7 +304,8 @@ document.querySelectorAll('.sheet input').forEach(el =>
   })
 );
 
-$('className').addEventListener('input', regen);
+const classNameEl = $('className');
+if (classNameEl) classNameEl.addEventListener('input', regen);
 
 function onSettingsChanged() {
   syncUI();
@@ -246,7 +313,7 @@ function onSettingsChanged() {
 }
 
 $('copy').addEventListener('click', () => {
-  navigator.clipboard.writeText(state._code || '');
+  navigator.clipboard.writeText(state._code || '').catch(() => {});
   const b = $('copy');
   b.textContent = 'Copied';
   setTimeout(() => b.textContent = 'Copy', 1100);
@@ -260,17 +327,69 @@ $('download').addEventListener('click', () => {
   a.click();
 });
 
-const outToggle = $('outToggle');
-if (outToggle && outEl) {
-  outToggle.addEventListener('click', () => {
-    const collapsed = outEl.classList.toggle('collapsed');
-    outToggle.textContent = collapsed ? 'v' : '^';
-    outToggle.title = collapsed ? 'Expand output' : 'Collapse output';
+function wireAuxButtons() {
+  const copyDetect = $('copyDetect');
+  const copyVisible = $('copyVisible');
+  const copyPick = $('copyPick');
+  const clearDetect = $('clearDetect');
+  const clearVisible = $('clearVisible');
+  const clearPick = $('clearPick');
+  const growMain = $('growMain');
+  const growDetect = $('growDetect');
+  const growVisible = $('growVisible');
+  const growPick = $('growPick');
+
+  if (copyDetect) copyDetect.addEventListener('click', () => navigator.clipboard.writeText(state._detectSnap || '').catch(() => {}));
+  if (copyVisible) copyVisible.addEventListener('click', () => navigator.clipboard.writeText(state._isVisibleSnap || '').catch(() => {}));
+  if (copyPick) copyPick.addEventListener('click', () => navigator.clipboard.writeText(state._pickSnap || '').catch(() => {}));
+
+  if (clearDetect) clearDetect.addEventListener('click', () => {
+    state.steps = state.steps.map((s) => ({ ...s, isDetect: false })).filter((s) => s.verb !== 'detect');
+    render();
   });
+  if (clearVisible) clearVisible.addEventListener('click', () => {
+    state.steps = state.steps.filter((s) => s.verb !== 'is_visible');
+    render();
+  });
+  if (clearPick) clearPick.addEventListener('click', () => {
+    state.steps = state.steps.filter((s) => s.verb !== 'pick');
+    render();
+  });
+
+  const toggleSize = (btn, el) => {
+    if (!btn || !el) return;
+    btn.addEventListener('click', () => {
+      el.classList.toggle('expanded');
+      btn.textContent = el.classList.contains('expanded') ? 'Size -' : 'Size +';
+      autoGrowBlocks();
+    });
+  };
+  toggleSize(growMain, mainOut);
+  toggleSize(growDetect, detectCard);
+  toggleSize(growVisible, visibleCard);
+  toggleSize(growPick, pickCard);
 }
 
+function autoGrowPre(preEl, containerEl, minPx, maxPx) {
+  if (!preEl || !containerEl) return;
+  const lines = (preEl.textContent || '').split('\n').length;
+  const lineHeight = 20;
+  const target = Math.max(minPx, Math.min(maxPx, 40 + (lines * lineHeight)));
+  preEl.style.maxHeight = `${target}px`;
+}
+
+function autoGrowBlocks() {
+  autoGrowPre(codeEl, mainOut, 320, mainOut && mainOut.classList.contains('expanded') ? 860 : 560);
+  autoGrowPre(detectCodeEl, detectCard, 120, detectCard && detectCard.classList.contains('expanded') ? 520 : 300);
+  autoGrowPre(isVisibleCodeEl, visibleCard, 120, visibleCard && visibleCard.classList.contains('expanded') ? 520 : 300);
+  autoGrowPre(pickCodeEl, pickCard, 120, pickCard && pickCard.classList.contains('expanded') ? 520 : 300);
+}
+
+wireAuxButtons();
 syncUI();
 render();
 if (!isExtensionRuntime) {
   statusTxt.textContent = 'Preview mode (no recording)';
+} else {
+  setRecordingUI();
 }

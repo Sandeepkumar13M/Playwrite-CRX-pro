@@ -18,17 +18,21 @@
     font-size:14px;height:100vh;display:flex;flex-direction:column;overflow:hidden;
     -webkit-font-smoothing:antialiased}
   .top{padding:18px 18px 14px;display:flex;align-items:center;gap:12px}
-  .logo{width:34px;height:34px;border-radius:10px;background:var(--ink);display:grid;place-items:center;flex-shrink:0}
-  .logo svg{width:18px;height:18px;fill:#fff}
+  .logo{width:34px;height:34px;border-radius:10px;background:#0f172a;display:grid;place-items:center;flex-shrink:0;overflow:hidden}
+  .logo img{width:100%;height:100%;object-fit:cover;display:block}
   .title{font-size:17px;font-weight:600;letter-spacing:-.3px}
   .status{margin-left:auto;font-size:12px;color:var(--mut);display:flex;align-items:center;gap:6px}
   .pulse{width:8px;height:8px;border-radius:50%;background:var(--mut)}
   .pulse.on{background:var(--rec);animation:beat 1.3s infinite}
   @keyframes beat{0%,100%{opacity:1}50%{opacity:.35}}
   .recwrap{padding:4px 18px 14px}
-  .rec{width:100%;border:none;border-radius:12px;padding:12px 14px;font-size:14px;font-weight:700;font-family:var(--sans);color:#fff;background:var(--np-red);cursor:pointer;transition:transform .12s,background .2s;letter-spacing:-.1px}
+  .rec-actions{display:flex;gap:8px}
+  .rec{flex:1;border:none;border-radius:12px;padding:12px 14px;font-size:14px;font-weight:700;font-family:var(--sans);color:#fff;background:var(--np-red);cursor:pointer;transition:transform .12s,background .2s;letter-spacing:-.1px}
   .rec:active{transform:scale(.98)}
   .rec.on{background:var(--ink)}
+  .pause-btn{flex:1;border:none;border-radius:12px;padding:12px 14px;font-size:12px;font-weight:700;font-family:var(--mono);letter-spacing:.35px;background:#64748b;color:#fff;cursor:pointer}
+  .pause-btn:disabled{opacity:.5;cursor:not-allowed}
+  .pause-btn.active{background:#0ea5e9}
   .mini{display:flex;gap:8px;margin-top:8px}
   .mini button{flex:1;border:none;border-radius:11px;padding:10px;font-size:11.5px;font-weight:700;font-family:var(--mono);text-transform:uppercase;letter-spacing:.45px;color:var(--ink);background:var(--card);cursor:pointer;transition:transform .12s;box-shadow:0 1px 2px rgba(0,0,0,.04)}
   .mini button:active{transform:scale(.97)}
@@ -38,7 +42,7 @@
   #isVisible{background:#6e56cf;color:#fff}
   #clear{background:var(--np-red);color:#fff}
   #pick:active,#detect:active,#isVisible:active,#clear:active{filter:brightness(.95)}
-  .sheet{margin:0 18px 14px;background:var(--card);border-radius:var(--radius);padding:2px 14px;box-shadow:0 1px 3px rgba(0,0,0,.05)}
+  .sheet{margin:0 18px 12px;background:var(--card);border-radius:var(--radius);padding:6px 14px;box-shadow:0 1px 3px rgba(0,0,0,.05);position:sticky;top:0;z-index:5}
   .row{display:flex;align-items:center;padding:10px 0;border-bottom:1px solid var(--line)}
   .row:last-child{border-bottom:none}
   #rowClass{padding:7px 0}
@@ -51,8 +55,8 @@
   .pillgroup input{position:absolute;opacity:0}
   .pillgroup span{display:block;padding:6px 11px;font-size:12px;border-radius:7px;color:var(--mut);transition:.18s;font-weight:500;white-space:nowrap}
   .pillgroup label:has(input:checked) span{background:var(--card);color:var(--ink);box-shadow:0 1px 3px rgba(0,0,0,.1)}
-  #selectorGroup{gap:4px;background:var(--nth-gray);padding:4px;border-radius:12px}
-  #selectorGroup span{background:transparent;border:1px solid #dedee2;color:#6b6b72;font-weight:600}
+  #selectorGroup{gap:8px;background:#eef0f3;padding:8px;border-radius:14px}
+  #selectorGroup span{background:#ffffff;border:1px solid #d3d6dd;color:#4b5563;font-weight:650;padding:7px 14px;border-radius:9px}
   #selectorGroup label:has(input:checked) span{
     background:var(--np-red);
     color:#fff;
@@ -63,9 +67,9 @@
   .cls-input,.num{border:none;background:var(--bg);border-radius:9px;padding:6px 10px;font-family:var(--mono);font-size:12px;color:var(--ink);text-align:right}
   .cls-input{flex:0 0 128px;text-align:left}
   .num{width:84px}
-  .scroll{flex:1;overflow-y:auto;padding:0 18px}
+  .scroll{display:none}
   .sec{font-size:12px;color:var(--mut);font-weight:600;text-transform:uppercase;letter-spacing:.4px;margin:6px 4px 8px}
-  .empty{text-align:center;color:var(--mut);padding:46px 24px;font-size:13.5px;line-height:1.6}
+  .empty{display:none}
   .empty b{color:var(--rec)}
   .step{background:var(--card);border-radius:var(--radius);padding:14px;margin-bottom:10px;box-shadow:0 1px 3px rgba(0,0,0,.05);animation:rise .25s cubic-bezier(.2,.8,.2,1)}
   @keyframes rise{from{opacity:0;transform:translateY(6px)}}
@@ -91,36 +95,48 @@
   .sw .track:before{content:"";position:absolute;width:21px;height:21px;left:2px;top:2px;background:#fff;border-radius:50%;transition:.22s;box-shadow:0 1px 3px rgba(0,0,0,.25)}
   .sw input:checked + .track{background:var(--acc)}
   .sw input:checked + .track:before{transform:translateX(17px)}
-  .out{position:relative;background:var(--card);border-top:1px solid var(--line);display:flex;flex-direction:column;max-height:44vh;transition:max-height .2s ease}
-  .out.collapsed{max-height:46px}
-  .out.collapsed pre{display:none}
-  .out-toggle{position:absolute;right:10px;bottom:8px;border:none;background:var(--bg);color:var(--mut);
-    width:24px;height:24px;border-radius:8px;cursor:pointer;font-size:14px;line-height:1}
-  .out-toggle:hover{color:var(--ink)}
-  .out-top{display:flex;align-items:center;gap:8px;padding:13px 18px 10px}
-  .out-top .fn{font-family:var(--mono);font-size:12px;color:var(--mut);flex:1}
+  .snaps-wrap{margin:0 18px 12px;display:flex;flex-direction:column;gap:10px;max-height:72vh;overflow:auto}
+  .out{position:relative;background:#0f172a;border:1px solid #1e293b;display:flex;flex-direction:column;min-height:430px;max-height:none;margin:0;border-radius:14px;box-shadow:0 6px 18px rgba(2,6,23,.22);overflow:auto}
+  .out.expanded{max-height:82vh}
+  .out-top{display:flex;align-items:center;gap:8px;padding:11px 14px 10px;background:#111827;border-bottom:1px solid #1f2937}
+  .out-top .fn{font-family:var(--mono);font-size:12px;color:#93c5fd;flex:1}
   .out-top button{border:none;border-radius:9px;padding:7px 14px;font-size:12.5px;font-weight:600;font-family:var(--sans);cursor:pointer;transition:transform .12s}
   .out-top button:active{transform:scale(.95)}
+  .b-size{background:#334155;color:#fff}
   .b-copy{background:var(--acc);color:#fff}
-  .b-dl{background:var(--bg);color:var(--ink)}
-  pre{flex:1;overflow:auto;padding:0 18px 16px;margin:0;font-size:12px;line-height:1.6;font-family:var(--mono);white-space:pre;color:var(--ink)}
-  .kw{color:#9b2393}.str{color:#c41a16}.cls{color:#3900a0}.cm{color:#8e8e93}
+  .b-dl{background:#e5e7eb;color:#111827}
+  pre{flex:1;overflow:auto;padding:12px 14px 16px;margin:0;font-size:12px;line-height:1.6;font-family:var(--mono);white-space:pre;color:#e2e8f0;min-height:240px}
+  .aux-snaps{margin:0;display:grid;gap:10px}
+  .aux-card{background:#0b1220;border:1px solid #243043;border-radius:12px;overflow:auto;min-height:180px;max-height:34vh}
+  .aux-card.expanded{max-height:58vh}
+  .aux-top{display:flex;align-items:center;gap:8px;padding:8px 12px;font-family:var(--mono);font-size:11px;color:#93c5fd;background:#111827;border-bottom:1px solid #1f2937}
+  .aux-title{flex:1}
+  .aux-top button{border:none;border-radius:7px;padding:4px 8px;font-size:10px;font-weight:700;font-family:var(--mono);cursor:pointer}
+  .aux-size{background:#475569;color:#fff}
+  .aux-copy{background:#2563eb;color:#fff}
+  .aux-clear{background:#ef4444;color:#fff}
+  .aux-card pre{max-height:300px;overflow:auto;white-space:pre-wrap;word-break:break-word;min-height:120px}
+  .aux-card.expanded pre{max-height:520px}
+  #pickCode{color:#d1d5db}
+  .kw{color:#c586c0}.str{color:#ce9178}.cls{color:#4ec9b0}.cm{color:#6a9955}
   ::-webkit-scrollbar{width:7px;height:7px}
   ::-webkit-scrollbar-thumb{background:#d0d0d5;border-radius:4px}
 </style>
 </head>
 <body>
   <div class="top">
-    <div class="logo"><svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg></div>
+    <div class="logo"><img src="icons/playwright-logo.png" alt="Playwright logo" /></div>
     <div class="title">POM Recorder</div>
     <div class="status"><span class="pulse" id="pulse"></span><span id="statusTxt">Idle</span></div>
   </div>
   <div class="recwrap">
-    <button class="rec" id="rec">Record</button>
+    <div class="rec-actions">
+      <button class="rec" id="rec">Record</button>
+      <button class="pause-btn" id="pause" disabled>Pause</button>
+    </div>
     <div class="mini"><button id="pick">Pick element</button><button id="detect">Detect state</button><button id="isVisible">Is visible</button><button id="clear">Clear all</button></div>
   </div>
   <div class="sheet">
-    <div class="row" id="rowClass"><label class="k">Class name</label><input class="cls-input" id="className" value="GeneratedState" spellcheck="false" /></div>
     <div class="row">
       <label class="k" id="selectorLabel">Selector</label>
       <div class="pillgroup" id="selectorGroup">
@@ -136,18 +152,28 @@
       </div>
     </div>
   </div>
-  <div class="scroll" id="scroll">
-    <div class="sec">Steps</div>
-    <div class="empty" id="empty">
-      Tap <b>Record</b> and interact with the page.<br>
-      Toggle <b style="color:var(--acc)">detect&nbsp;state</b> on any step<br>
-      to make it the state detector.
+  <div class="snaps-wrap" id="snapsWrap">
+    <div class="out" id="mainOut">
+      <div class="out-top"><span class="fn" id="fnLabel">code_snap.py</span><button class="b-size" id="growMain">Size +</button><button class="b-dl" id="download">Save</button><button class="b-copy" id="copy">Copy</button></div>
+      <pre id="code"></pre>
+    </div>
+    <div class="aux-snaps">
+      <div class="aux-card" id="detectCard">
+        <div class="aux-top"><span class="aux-title">detect_state snap</span><button class="aux-size" id="growDetect">Size +</button><button class="aux-copy" id="copyDetect">Copy</button><button class="aux-clear" id="clearDetect">Clear</button></div>
+        <pre id="detectCode"></pre>
+      </div>
+      <div class="aux-card" id="visibleCard">
+        <div class="aux-top"><span class="aux-title">is_visible snap</span><button class="aux-size" id="growVisible">Size +</button><button class="aux-copy" id="copyVisible">Copy</button><button class="aux-clear" id="clearVisible">Clear</button></div>
+        <pre id="isVisibleCode"></pre>
+      </div>
+      <div class="aux-card" id="pickCard">
+        <div class="aux-top"><span class="aux-title">pick element HTML (auto-copied)</span><button class="aux-size" id="growPick">Size +</button><button class="aux-copy" id="copyPick">Copy</button><button class="aux-clear" id="clearPick">Clear</button></div>
+        <pre id="pickCode"></pre>
+      </div>
     </div>
   </div>
-  <div class="out">
-    <div class="out-top"><span class="fn" id="fnLabel">code_snap.py</span><button class="b-dl" id="download">Save</button><button class="b-copy" id="copy">Copy</button></div>
-    <pre id="code"></pre>
-    <button id="outToggle" class="out-toggle" title="Collapse output">⌵</button>
+  <div class="scroll" id="scroll">
+    <div class="empty" id="empty"></div>
   </div>
   <script src="codegen.js"></script>
   <script src="panel.js"></script>

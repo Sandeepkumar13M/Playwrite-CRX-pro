@@ -14,6 +14,14 @@
       .toLowerCase() || 'element';
   }
 
+  function upperSnake(s) {
+    return (s || 'detected')
+      .replace(/[^a-zA-Z0-9]+/g, '_')
+      .replace(/^_+|_+$/g, '')
+      .replace(/__+/g, '_')
+      .toUpperCase() || 'DETECTED';
+  }
+
   // Build "self.app.page" + optional ".frame_locator(...)" chain for the iframe path,
   // then the element locator (role-first or css).
   function locatorChain(step, strategy) {
@@ -152,20 +160,18 @@
     return name;
   }
 
-  function locExpr(step, strategy, pageVar) {
+  function locExpr(step, strategy, pageVar, rawXpath) {
     const sel = step.selector || {};
     const role = sel.role, css = sel.css, xpath = sel.xpath;
     const meta = sel.meta || {};
     let chain = pageVar || 'page';
     if (step.framePath && step.framePath.length)
       for (const fs of step.framePath) chain += `.frame_locator(${pyStr(fs)})`;
-    const scopedChain = meta.parentCss ? `${chain}.locator(${pyStr(meta.parentCss)})` : chain;
-    const withScope = (rawExpr, count) => {
-      if (count > 1 && meta.parentCss) {
-        return { expr: rawExpr(scopedChain), scoped: true };
-      }
-      return { expr: rawExpr(chain), scoped: false };
-    };
+    const isChoiceInput = !!(role && (role.role === 'checkbox' || role.role === 'radio'));
+    const scopedChain = (isChoiceInput && meta.formCss)
+      ? `${chain}.locator(${pyStr(meta.formCss)})`
+      : chain;
+    const withScope = (rawExpr, _count) => ({ expr: rawExpr(scopedChain), scoped: false });
 
     const byRole = () => {
       if (!(role && role.role)) return null;
@@ -191,13 +197,13 @@
       sel.testId ? { ...withScope((c) => `${c}.get_by_test_id(${pyStr(sel.testId)})`, meta.testIdCount || 0), tier: 2, fallback: true } : null;
     const byCss = () => (css && css.value) ? { expr: `${chain}.locator(${pyStr(css.value)})`, scoped: false, tier: 3, fallback: true } : null;
     const byXpath = () => (xpath && xpath.value)
-      ? { expr: `${chain}.locator(${pyStr(`xpath=${xpath.value}`)})`, scoped: false, tier: 3, fallback: strategy !== 'xpath' }
+      ? { expr: `${chain}.locator(${pyStr(rawXpath ? xpath.value : `xpath=${xpath.value}`)})`, scoped: false, tier: 3, fallback: strategy !== 'xpath' }
       : null;
 
     // Playwright locator priority:
     // 1) role 2) label 3) placeholder 4) text 5) alt 6) title 7) test id 8) css/xpath
     // Strategy button only changes first preference for newly recorded steps.
-    const semanticDefault = [byRole, byLabel, byPlaceholder, byText, byAlt, byTitle, byTestId, byCss, byXpath];
+    const semanticDefault = [byRole, byLabel, byPlaceholder, byTestId, byText, byAlt, byTitle, byCss, byXpath];
     const orderMap = {
       role: [byRole, ...semanticDefault],
       label: [byLabel, ...semanticDefault],
@@ -218,7 +224,6 @@
         const notes = [];
         if (r.fallback && r.tier === 2) notes.push('Tier 2 fallback: semantic locator unavailable');
         if (r.fallback && r.tier === 3) notes.push('Tier 3 fallback: CSS used as last resort');
-        if (r.scoped) notes.push('Scoped from stable parent due to duplicates');
         return { expr: r.expr, tier: r.tier, comment: notes.join('; ') };
       }
     }
@@ -237,6 +242,44 @@
     return `    ${v}.wait_for(state=${pyStr(state)}${t ? `, timeout=${t}` : ''})`;
   }
 
+  function buildSpecialSnaps(steps, opts) {
+    const detectSteps = steps.filter((s) => s.verb === 'detect' || s.isDetect);
+    const isVisibleSteps = steps.filter((s) => s.verb === 'is_visible');
+    const pickSteps = steps.filter((s) => s.verb === 'pick');
+    const strategy = opts.sel || 'role';
+
+    let detectSnap = '# no detect_state yet';
+    if (detectSteps.length) {
+      const lines = [];
+      detectSteps.forEach((step, i) => {
+        const loc = locExpr(step, strategy, 'app.page', true).expr;
+        const method = i === 0 ? 'detect_state' : `detect_state_${i + 1}`;
+        lines.push(`def ${method}(self):`);
+        lines.push(`    return ${loc}.is_visible()`);
+        lines.push('');
+      });
+      detectSnap = lines.join('\n').trim();
+    }
+
+    let isVisibleSnap = '# no is_visible yet';
+    if (isVisibleSteps.length) {
+      const lines = [];
+      isVisibleSteps.forEach((step, i) => {
+        const loc = locExpr(step, strategy, 'app.page', true).expr;
+        const method = i === 0 ? 'is_visible' : `is_visible_${i + 1}`;
+        lines.push(`def ${method}(self):`);
+        lines.push(`    ${loc}.wait_for(state="visible", timeout=10000)`);
+        lines.push('');
+      });
+      isVisibleSnap = lines.join('\n').trim();
+    }
+
+    const pickSnap = pickSteps.length
+      ? pickSteps.map((s, i) => `# pick ${i + 1}\n${s.html || '<!-- empty element -->'}`).join('\n\n')
+      : '<!-- no picked element yet -->';
+    return { detectSnap, isVisibleSnap, pickSnap };
+  }
+
   function generatePlaywright(steps, opts) {
     const actionSteps = steps.filter(s => !!s.verb);
 
@@ -252,10 +295,10 @@
     const byExpr = new Map();
     const locDefs = [];
     const flow = [];
-    const snap = [];
+    const snapBody = [];
 
     actionSteps.forEach(step => {
-      const loc = locExpr(step, step.selStrategy || opts.sel, step.__page);
+      const loc = locExpr(step, step.selStrategy || opts.sel, step.__page, false);
       const expr = loc.expr;
       step.__expr = expr;
       step.__locMeta = loc;
@@ -291,40 +334,38 @@
         flow.push(`    ${act}`);
       }
 
-      // Compact "Code Snap" style (locator + action on one line).
-      if (step.__locMeta && step.__locMeta.comment) {
-        snap.push(`# ${step.__locMeta.comment}`);
-      }
+      // Compact "Code Snap" style (emit direct page actions).
+      if (step.isDetect || step.verb === 'detect' || step.verb === 'is_visible' || step.verb === 'pick') return;
       switch (step.verb) {
         case 'click':
-          snap.push(`${v} = ${step.__expr}.click()`);
+          snapBody.push(`    ${step.__expr}.click()`);
           break;
         case 'fill':
         case 'fill_rich':
-          snap.push(`${v} = ${step.__expr}.fill(${pyStr(step.value)})`);
+          snapBody.push(`    ${step.__expr}.fill(${pyStr(step.value)})`);
           break;
         case 'check':
-          snap.push(`${v} = ${step.__expr}.check()`);
+          snapBody.push(`    ${step.__expr}.check()`);
           break;
         case 'uncheck':
-          snap.push(`${v} = ${step.__expr}.uncheck()`);
+          snapBody.push(`    ${step.__expr}.uncheck()`);
           break;
         case 'select':
-          snap.push(`${v} = ${step.__expr}.select_option(${pyStr(step.value)})`);
-          break;
-        case 'detect':
-          snap.push(`${v} = ${step.__expr}.is_visible()`);
-          break;
-        case 'is_visible':
-          snap.push(`${v} = ${step.__expr}.is_visible(state="visible", timeout=10000)`);
-          break;
-        case 'pick':
-          snap.push(`${v} = ${step.__expr}`);
+          snapBody.push(`    ${step.__expr}.select_option(${pyStr(step.value)})`);
           break;
         default:
-          snap.push(`${v} = ${step.__expr}.click()`);
+          snapBody.push(`    ${step.__expr}.click()`);
       }
     });
+
+    const snap = [
+      'import re',
+      'from playwright.sync_api import Page, expect',
+      '',
+      '',
+      'def test_example(page: Page) -> None:',
+      ...(snapBody.length ? snapBody : ['    pass']),
+    ];
 
     const code = [
       'from playwright.sync_api import Page, expect',
@@ -333,20 +374,43 @@
       ...(flow.length ? flow : ['    pass']),
     ].join('\n');
 
+    const extras = buildSpecialSnaps(steps, opts);
     return {
       locators: locDefs.join('\n') || '# no locators yet',
       code,
-      snap: snap.join('\n')
+      snap: snap.join('\n'),
+      detectSnap: extras.detectSnap,
+      isVisibleSnap: extras.isVisibleSnap,
+      pickSnap: extras.pickSnap,
     };
   }
 
   function highlight(code) {
-    return code
-      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-      .replace(/(#[^\n]*)/g, '<span class="cm">$1</span>')
-      .replace(/\b(from|import|class|def|self|return|True|None|False|with|as)\b/g, '<span class="kw">$1</span>')
-      .replace(/\b(BaseState|expect|Page)\b/g, '<span class="cls">$1</span>')
-      .replace(/("[^"]*?")/g, '<span class="str">$1</span>');
+    const esc = (s) => s
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;');
+
+    const kwRe = /\b(from|import|def|self|return|True|None|False|with|as|pass)\b/g;
+    const clsRe = /\b(BaseState|expect|Page)\b/g;
+    const strRe = /("(?:[^"\\]|\\.)*")/g;
+
+    return String(code || '')
+      .split('\n')
+      .map((line) => {
+        const hash = line.indexOf('#');
+        const codePart = hash >= 0 ? line.slice(0, hash) : line;
+        const commentPart = hash >= 0 ? line.slice(hash) : '';
+
+        let out = esc(codePart)
+          .replace(strRe, '<span class="str">$1</span>')
+          .replace(kwRe, '<span class="kw">$1</span>')
+          .replace(clsRe, '<span class="cls">$1</span>');
+
+        if (commentPart) out += `<span class="cm">${esc(commentPart)}</span>`;
+        return out;
+      })
+      .join('\n');
   }
 
   global.PWCodegen = { generate, generatePlaywright, highlight };

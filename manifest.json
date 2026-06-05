@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Playwright CRX Pro",
-  "version": "1.0.0",
+  "version": "0.1.1",
   "description": "Record browser actions and generate Playwright Python POM code with per-action waits and deep iframe handling.",
   "permissions": ["activeTab", "scripting", "storage", "tabs", "sidePanel"],
   "host_permissions": ["<all_urls>"],

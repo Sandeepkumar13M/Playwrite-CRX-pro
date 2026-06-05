@@ -178,17 +178,30 @@
   }
 
   function buildSelector(el) {
+    // If user clicks nested text inside a heading, prefer the heading itself.
+    // This produces stable selectors like get_by_role("heading", name="...").
+    let target = el;
+    const headingAncestor = el.closest && el.closest('h1,h2,h3,h4,h5,h6,[role="heading"]');
+    if (headingAncestor) target = headingAncestor;
+
     // Capture semantic selector candidates for codegen priority resolution.
-    const role = roleSelector(el);
-    const css = cssSelector(el);
-    const xpath = xpathSelector(el);
-    const text = (el.textContent || '').trim().slice(0, 80);
-    const placeholder = (el.getAttribute('placeholder') || '').trim() || null;
-    const alt = (el.getAttribute('alt') || '').trim() || null;
-    const title = (el.getAttribute('title') || '').trim() || null;
-    const testId = (el.getAttribute('data-testid') || el.getAttribute('data-test') || '').trim() || null;
-    const label = labelText(el);
-    const meta = selectorMeta(el, { role, label, placeholder, text, alt, title, testId, css });
+    const role = roleSelector(target);
+    const css = cssSelector(target);
+    const xpath = xpathSelector(target);
+    const text = (target.textContent || '').trim().slice(0, 80);
+    const placeholder = (target.getAttribute('placeholder') || '').trim() || null;
+    const alt = (target.getAttribute('alt') || '').trim() || null;
+    const title = (target.getAttribute('title') || '').trim() || null;
+    const testId = (target.getAttribute('data-testid') || target.getAttribute('data-test') || '').trim() || null;
+    const label = labelText(target);
+    const meta = selectorMeta(target, { role, label, placeholder, text, alt, title, testId, css });
+    if (target.tagName === 'INPUT') {
+      const type = (target.getAttribute('type') || '').toLowerCase();
+      if (type === 'checkbox' || type === 'radio') {
+        const formCss = formContextCss(target);
+        if (formCss) meta.formCss = formCss;
+      }
+    }
     return {
       role,
       css,
@@ -260,6 +273,18 @@
     return meta;
   }
 
+  function formContextCss(el) {
+    let node = el && el.parentElement;
+    while (node && node !== document.body && node !== document.documentElement) {
+      if (node.tagName === 'FORM' || node.getAttribute('role') === 'form') {
+        const c = cssSelector(node);
+        return c && c.value ? c.value : null;
+      }
+      node = node.parentElement;
+    }
+    return null;
+  }
+
   function opensPopup(el) {
     // Best effort: anchors that open a new tab. window.open() can't be
     // reliably detected from a content script.
@@ -288,9 +313,23 @@
   function clearHL() { if (hoverBox) hoverBox.style.display = 'none'; }
 
   // ---------- Emit ----------
+  function getRuntime() {
+    try {
+      const c = (typeof window !== 'undefined' && window) ? window['chrome'] : null;
+      if (c && c.runtime) return c.runtime;
+    } catch (_) {}
+    return null;
+  }
+
   async function emit(action) {
     const framePath = await getFramePath();
-    chrome.runtime.sendMessage({ from: 'content', type: 'ACTION', action: { ...action, framePath } });
+    const runtime = getRuntime();
+    if (!runtime || !runtime.sendMessage) return;
+    try {
+      runtime.sendMessage({ from: 'content', type: 'ACTION', action: { ...action, framePath } });
+    } catch (_) {
+      // Ignore when extension context is unavailable/reloading.
+    }
   }
 
   // ---------- Event handlers ----------
@@ -306,22 +345,28 @@
     // one-shot DETECT mode: capture this element as the state detector, then auto-disable
     if (detecting) {
       e.preventDefault(); e.stopPropagation();
-      emit({ verb: 'detect', selector: buildSelector(el), tag: el.tagName });
+      emit({ verb: 'detect', selector: buildSelector(el), tag: el.tagName, html: el.outerHTML || '' });
       detecting = false; clearHL();
-      chrome.runtime.sendMessage({ from: 'content', type: 'DETECT_DONE' });
+      try {
+        const runtime = getRuntime();
+        if (runtime && runtime.sendMessage) runtime.sendMessage({ from: 'content', type: 'DETECT_DONE' });
+      } catch (_) {}
       return;
     }
     if (checkingVisible) {
       e.preventDefault(); e.stopPropagation();
-      emit({ verb: 'is_visible', selector: buildSelector(el), tag: el.tagName });
+      emit({ verb: 'is_visible', selector: buildSelector(el), tag: el.tagName, html: el.outerHTML || '' });
       checkingVisible = false; clearHL();
-      chrome.runtime.sendMessage({ from: 'content', type: 'IS_VISIBLE_DONE' });
+      try {
+        const runtime = getRuntime();
+        if (runtime && runtime.sendMessage) runtime.sendMessage({ from: 'content', type: 'IS_VISIBLE_DONE' });
+      } catch (_) {}
       return;
     }
 
     if (picking) {
       e.preventDefault(); e.stopPropagation();
-      emit({ verb: 'pick', selector: buildSelector(el), tag: el.tagName });
+      emit({ verb: 'pick', selector: buildSelector(el), tag: el.tagName, html: el.outerHTML || '' });
       picking = false; clearHL();
       return;
     }
@@ -341,6 +386,7 @@
       } else if (el.tagName === 'SELECT') {
         emit({ verb: 'select', selector: buildSelector(el), value: el.value, tag: el.tagName });
       } else {
+        if (!String(el.value || '').trim()) return;
         emit({ verb: 'fill', selector: buildSelector(el), value: el.value, tag: el.tagName });
       }
     } else if (el.tagName === 'SELECT') {
@@ -355,9 +401,11 @@
     if (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA') {
       const t = (el.getAttribute('type') || '').toLowerCase();
       if (t !== 'checkbox' && t !== 'radio') {
+        if (!String(el.value || '').trim()) return;
         emit({ verb: 'fill', selector: buildSelector(el), value: el.value, tag: el.tagName });
       }
     } else if (el.isContentEditable) {
+      if (!String(el.innerText || '').trim()) return;
       emit({ verb: 'fill_rich', selector: buildSelector(el), value: el.innerText, tag: el.tagName });
     }
   }
@@ -367,6 +415,7 @@
     const el = e.target;
     if (el.isContentEditable) {
       // rich text / <p> editors
+      if (!String(el.innerText || '').trim()) return;
       emit({ verb: 'fill_rich', selector: buildSelector(el), value: el.innerText, tag: el.tagName });
     }
   }
@@ -378,14 +427,19 @@
   document.addEventListener('blur', onBlur, true);
 
   // ---------- Commands from panel ----------
-  chrome.runtime.onMessage.addListener((msg) => {
-    if (!msg || msg.from !== 'panel') return;
-    if (msg.type === 'CMD') {
-      if (msg.cmd === 'start') { recording = true; }
-      if (msg.cmd === 'stop') { recording = false; clearHL(); }
-      if (msg.cmd === 'pick') { picking = true; }
-      if (msg.cmd === 'detect') { detecting = true; }
-      if (msg.cmd === 'is_visible') { checkingVisible = true; }
-    }
-  });
+  const runtimeForListener = getRuntime();
+  if (runtimeForListener && runtimeForListener.onMessage && runtimeForListener.onMessage.addListener) {
+    runtimeForListener.onMessage.addListener((msg) => {
+      if (!msg || msg.from !== 'panel') return;
+      if (msg.type === 'CMD') {
+        if (msg.cmd === 'start') { recording = true; }
+        if (msg.cmd === 'stop') { recording = false; picking = false; detecting = false; checkingVisible = false; clearHL(); }
+        if (msg.cmd === 'pause') { recording = false; clearHL(); }
+        if (msg.cmd === 'resume') { recording = true; }
+        if (msg.cmd === 'pick') { picking = true; }
+        if (msg.cmd === 'detect') { detecting = true; }
+        if (msg.cmd === 'is_visible') { checkingVisible = true; }
+      }
+    });
+  }
 })();
