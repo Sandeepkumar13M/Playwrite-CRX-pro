@@ -31,8 +31,9 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   }
 
   // From panel -> broadcast to all frames of the active tab
+  // windowType is omitted so incognito windows are included (spanning mode)
   if (msg.from === 'panel') {
-    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+    chrome.tabs.query({ active: true, lastFocusedWindow: true }, (tabs) => {
       const tab = tabs[0];
       if (!tab || tab.id == null) return;
       chrome.tabs.sendMessage(tab.id, msg).catch(() => {});
