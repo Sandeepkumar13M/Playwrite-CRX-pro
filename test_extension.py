@@ -13,7 +13,9 @@ async def main():
     async with async_playwright() as pw:
         context = await pw.chromium.launch_persistent_context(
             user_data_dir="",          # temp profile
-            channel="chrome",          # use installed Chrome
+            # Branded Google Chrome (137+) ignores --load-extension, so use
+            # Playwright's Chromium:  playwright install chromium
+            channel="chromium",
             headless=False,
             args=[
                 f"--disable-extensions-except={EXT_DIR}",

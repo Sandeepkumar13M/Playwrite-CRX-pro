@@ -32,6 +32,29 @@
 - **State detection** — Mark steps as state detectors to generate `is_visible` / state-check helpers
 - **One-click export** — Copy to clipboard or download the generated `.py` file instantly
 
+### New in 1.9.0 beta 1
+
+- **▶ Play / replay** — replays the recorded steps in the current tab with real (trusted) mouse & keyboard
+  input, through nested iframes and popups, with a live ✓ / ✗ log per step. Uses the *same* locators as the
+  generated code, so a green replay means your locators work. (Chrome shows a "started debugging this
+  browser" bar while it runs — that is expected.)
+- **Smart unique locators** — every candidate locator is tested on the page while recording; the first one
+  that matches exactly one element wins, adding `exact=True` or `.nth(i)` only when needed (no more
+  Playwright *strict mode violations*). Clicking an icon/span inside a button records the button.
+- **6 output languages** — Python (Pytest / Library / Async), Playwright Test (TS/JS), Java, C# NUnit
+- **Assertions** — *Assert visible* → `to_be_visible`, *Assert text* → `to_contain_text`,
+  *Assert value* → `to_have_value` / `to_be_checked`
+- **Records `goto`** for the start page and **key presses** (Enter, Tab, Shift+Tab, Escape)
+- **Recording survives navigation** — keeps recording after links / form submits load a new page
+- **Steps survive closing the side panel** (stored by the background worker)
+- **Keyboard shortcuts** — `Alt+Shift+R` start/stop recording, `Alt+Shift+C` pick element, `Esc` cancels
+- **Right-click menu** — *Playwright CRX Pro → Pick / Detect state / Is visible / Assert text / Assert value*
+- **Locator tooltip** while picking, **Undo** button, **REC** badge on the toolbar icon
+- **Test id attribute** setting (e.g. `data-qa`), settings are remembered
+- Fixes: absolute XPath now gets the `xpath=` prefix, no duplicate click on checkbox/select,
+  `data-test` no longer becomes `get_by_test_id`, iframes don't stay armed after a pick,
+  works on tabs that were open before the extension was loaded
+
 ---
 
 ## Tech Stack
@@ -69,7 +92,11 @@
 5. Use **Detect state** to mark a step as a state/visibility checker
 6. Choose your preferred **Selector strategy** (text, role, css, xpath, etc.)
 7. Set the **Class name** for the generated POM class
-8. Press **Copy** to copy the generated Python code or **Save** to download it as a `.py` file
+8. Choose the output **Language** (Python, TS/JS, Java, C#)
+9. Use **Assert text** / **Assert value** then click an element to add an assertion
+10. Press **Copy** to copy the generated code or **Save** to download it (file name matches the language)
+
+> After editing any file, click the reload icon on the extension card in `chrome://extensions`.
 
 ---
 
@@ -124,6 +151,8 @@ Playwrite-CRX-pro/
 | `storage` | Persist settings and recorded steps |
 | `tabs` | Detect tab navigation events |
 | `sidePanel` | Display the recorder UI as a Chrome side panel |
+| `contextMenus` | Right-click menu: pick / detect / is visible / assertions |
+| `debugger` | ▶ Play: trusted clicks and typing during replay (only attached while replaying) |
 | `<all_urls>` | Enable recording on any website |
 
 ---
