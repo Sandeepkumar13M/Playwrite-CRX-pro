@@ -1,15 +1,28 @@
 {
   "manifest_version": 3,
   "name": "Playwright CRX Pro",
-  "version": "0.1.5",
-  "description": "Record browser actions and generate Playwright Python POM code with per-action waits and deep iframe handling.",
-  "permissions": ["activeTab", "scripting", "storage", "tabs", "sidePanel"],
+  "short_name": "PW CRX Pro",
+  "version": "1.9.0.1",
+  "version_name": "1.9.0 beta 1",
+  "description": "Record browser actions and generate Playwright code (Python, JavaScript, Java, C#) with POM snaps, assertions, per-action waits and deep iframe handling.",
+  "minimum_chrome_version": "116",
+  "permissions": ["activeTab", "scripting", "storage", "tabs", "sidePanel", "contextMenus", "debugger"],
   "host_permissions": ["<all_urls>"],
   "action": {
     "default_title": "Playwright CRX Pro"
   },
   "background": {
     "service_worker": "background.js"
+  },
+  "commands": {
+    "toggle-record": {
+      "suggested_key": { "default": "Alt+Shift+R" },
+      "description": "Start / stop recording"
+    },
+    "pick": {
+      "suggested_key": { "default": "Alt+Shift+C" },
+      "description": "Pick element locator"
+    }
   },
   "content_scripts": [
     {

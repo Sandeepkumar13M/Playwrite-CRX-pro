@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>POM Recorder</title>
+<title>Playwright CRX Pro</title>
 <style>
   :root{
     --bg:#f5f5f7; --card:#ffffff; --ink:#1d1d1f; --mut:#86868b;
@@ -41,7 +41,25 @@
   #detect{background:#0a84ff;color:#fff}
   #isVisible{background:#6e56cf;color:#fff}
   #clear{background:var(--np-red);color:#fff}
-  #pick:active,#detect:active,#isVisible:active,#clear:active{filter:brightness(.95)}
+  .play-btn{flex:1;border:none;border-radius:12px;padding:12px 14px;font-size:13px;font-weight:700;font-family:var(--sans);background:#2ead33;color:#fff;cursor:pointer}
+  .play-btn.running{background:#111827}
+  .play-btn:active{transform:scale(.98)}
+  .replay-card{min-height:0}
+  .replay-log{list-style:none;margin:0;padding:8px 12px 10px;font-family:var(--mono);font-size:11.5px;line-height:1.7;color:#e2e8f0}
+  .replay-log li{display:flex;gap:8px;align-items:baseline}
+  .replay-log .ok{color:#4ade80}.replay-log .bad{color:#f87171}.replay-log .run{color:#fbbf24}.replay-log .wait{color:#64748b}
+  .replay-log .msg{color:#fca5a5;word-break:break-word;white-space:normal}
+  #assertVisible{background:#0369a1;color:#fff}
+  #assertText{background:#0f766e;color:#fff}
+  #assertValue{background:#15803d;color:#fff}
+  #undo{background:#e5e7eb;color:#111827}
+  .mini button.armed{background:var(--acc)!important;color:#fff!important;outline:2px solid #fff;outline-offset:-4px}
+  #pick:active,#detect:active,#isVisible:active,#clear:active,#assertText:active,#assertValue:active,#undo:active{filter:brightness(.95)}
+  .ver{white-space:nowrap;display:inline-block;font-size:10.5px;font-weight:700;color:#fff;background:var(--np-red);border-radius:6px;padding:2px 6px;margin-left:4px;vertical-align:2px;letter-spacing:.2px}
+  .hint{margin-top:8px;font-size:11px;color:var(--mut);text-align:center}
+  .lang-select{border:none;background:var(--bg);border-radius:9px;padding:6px 10px;font-family:var(--sans);font-size:12.5px;color:var(--ink);cursor:pointer}
+  .c-goto,.c-press{background:#fff4e5;color:#c2410c}
+  .c-assert_text,.c-assert_value,.c-assert_checked{background:#e6f6f4;color:#0f766e}
   .sheet{margin:0 18px 12px;background:var(--card);border-radius:var(--radius);padding:6px 14px;box-shadow:0 1px 3px rgba(0,0,0,.05);position:sticky;top:0;z-index:5}
   .row{display:flex;align-items:center;padding:10px 0;border-bottom:1px solid var(--line)}
   .row:last-child{border-bottom:none}
@@ -126,15 +144,18 @@
 <body>
   <div class="top">
     <div class="logo"><img src="icons/playwright-logo.png" alt="Playwright logo" /></div>
-    <div class="title">POM Recorder</div>
+    <div class="title">Playwright CRX Pro <span class="ver" id="ver">1.9.0 beta 1</span></div>
     <div class="status"><span class="pulse" id="pulse"></span><span id="statusTxt">Idle</span></div>
   </div>
   <div class="recwrap">
     <div class="rec-actions">
       <button class="rec" id="rec">Record</button>
       <button class="pause-btn" id="pause" disabled>Pause</button>
+      <button class="play-btn" id="play" title="Replay the recorded steps in this tab">▶ Play</button>
     </div>
     <div class="mini"><button id="pick">Pick element</button><button id="detect">Detect state</button><button id="isVisible">Is visible</button><button id="clear">Clear all</button></div>
+    <div class="mini"><button id="assertVisible">Assert visible</button><button id="assertText">Assert text</button><button id="assertValue">Assert value</button><button id="undo">Undo</button></div>
+    <div class="hint">Alt+Shift+R record · Alt+Shift+C pick · Esc cancels · right-click → Playwright CRX Pro</div>
   </div>
   <div class="sheet">
     <div class="row">
@@ -151,6 +172,21 @@
         <label><input type="radio" name="sel" value="xpath"><span>xpath</span></label>
       </div>
     </div>
+    <div class="row">
+      <label class="k" for="lang">Language</label>
+      <select class="lang-select" id="lang">
+        <option value="python-pytest">Python · Pytest</option>
+        <option value="python">Python · Library</option>
+        <option value="python-async">Python · Async</option>
+        <option value="playwright-test">Playwright Test (TS/JS)</option>
+        <option value="java">Java</option>
+        <option value="csharp">C# · NUnit</option>
+      </select>
+    </div>
+    <div class="row">
+      <label class="k" for="testIdAttr">Test id attribute</label>
+      <input class="cls-input" id="testIdAttr" value="data-testid" spellcheck="false" />
+    </div>
   </div>
   <div class="snaps-wrap" id="snapsWrap">
     <div class="out" id="mainOut">
@@ -158,6 +194,10 @@
       <pre id="code"></pre>
     </div>
     <div class="aux-snaps">
+      <div class="aux-card replay-card" id="replayCard" hidden>
+        <div class="aux-top"><span class="aux-title" id="replayTitle">replay</span><button class="aux-clear" id="closeReplay">Close</button></div>
+        <ol class="replay-log" id="replayLog"></ol>
+      </div>
       <div class="aux-card" id="detectCard">
         <div class="aux-top"><span class="aux-title">detect_state snap</span><button class="aux-size" id="growDetect">Size +</button><button class="aux-copy" id="copyDetect">Copy</button><button class="aux-clear" id="clearDetect">Clear</button></div>
         <pre id="detectCode"></pre>
