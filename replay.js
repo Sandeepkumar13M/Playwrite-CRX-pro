@@ -62,7 +62,7 @@ const Replay = (() => {
 
   // Retry until the element exists (and is visible when needed) or time runs out.
   async function locate(tabId, step, op, extra = {}, needVisible = true) {
-    const strategy = step.selStrategy || run.sel || 'text';
+    const strategy = run.sel || step.selStrategy || "text";
     const parts = PWCodegen.locParts(step, strategy).parts;
     const cmd = {
       op,

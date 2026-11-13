@@ -14,6 +14,7 @@
   let recording = false;
   let armed = null;          // null | 'pick' | 'detect' | 'is_visible' | 'assert_text' | 'assert_value'
   let testIdAttr = 'data-testid';
+  let selStrategy = 'text';
   let lastContextTarget = null;
 
   // ---------- Frame path computation ----------
@@ -407,21 +408,27 @@
   }
 
   // Quick, cheap locator preview for the hover tooltip (no match counting).
+  // Follows the selected strategy pill (falls back in Playwright's priority order).
   function previewLocator(el) {
     const t = resolveTarget(el);
     const q = (s) => JSON.stringify(String(s).slice(0, 50));
     const role = roleSelector(t);
-    if (role && role.role && role.name) return `get_by_role(${q(role.role)}, name=${q(role.name)})`;
-    const label = labelText(t);
-    if (label) return `get_by_label(${q(label)})`;
-    const ph = t.getAttribute('placeholder');
-    if (ph) return `get_by_placeholder(${q(ph)})`;
     const tid = testIdOf(t);
-    if (tid) return tid.attr === 'data-testid' ? `get_by_test_id(${q(tid.value)})` : `locator(${q(`[${tid.attr}="${tid.value}"]`)})`;
-    const txt = (t.textContent || '').trim().replace(/\s+/g, ' ');
-    if (txt && txt.length <= 40) return `get_by_text(${q(txt)})`;
-    if (role && role.role) return `get_by_role(${q(role.role)})`;
-    return `locator(${q(cssSelector(t).value)})`;
+    const txt = isFormControl(t) ? '' : (t.textContent || '').trim().replace(/\s+/g, ' ');
+    const c = {
+      role: () => role && role.role ? (role.name ? `get_by_role(${q(role.role)}, name=${q(role.name)})` : `get_by_role(${q(role.role)})`) : null,
+      label: () => { const l = labelText(t); return l ? `get_by_label(${q(l)})` : null; },
+      placeholder: () => { const p = t.getAttribute('placeholder'); return p ? `get_by_placeholder(${q(p)})` : null; },
+      test_id: () => tid ? (tid.attr === 'data-testid' ? `get_by_test_id(${q(tid.value)})` : `locator(${q(`[${tid.attr}="${tid.value}"]`)})`) : null,
+      text: () => txt && txt.length <= 80 ? `get_by_text(${q(txt)})` : null,
+      alt_text: () => { const a = t.getAttribute('alt'); return a ? `get_by_alt_text(${q(a)})` : null; },
+      title: () => { const a = t.getAttribute('title'); return a ? `get_by_title(${q(a)})` : null; },
+      css: () => `locator(${q(cssSelector(t).value)})`,
+      xpath: () => `locator(${q('xpath=' + xpathSelector(t).value)})`,
+    };
+    const order = [selStrategy, 'role', 'label', 'placeholder', 'test_id', 'text', 'alt_text', 'title', 'css'];
+    for (const k of order) { const v = c[k] && c[k](); if (v) return v; }
+    return c.css();
   }
 
   // ---------- Visual highlight + tooltip ----------
@@ -832,10 +839,12 @@
   try {
     chrome.storage.local.get(['settings'], (d) => {
       if (d && d.settings && d.settings.testIdAttr) testIdAttr = d.settings.testIdAttr;
+      if (d && d.settings && d.settings.sel) selStrategy = d.settings.sel;
     });
     chrome.storage.onChanged.addListener((changes, area) => {
       if (area === 'local' && changes.settings && changes.settings.newValue) {
         testIdAttr = changes.settings.newValue.testIdAttr || 'data-testid';
+        selStrategy = changes.settings.newValue.sel || 'text';
       }
     });
   } catch (_) {}

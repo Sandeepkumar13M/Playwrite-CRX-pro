@@ -138,7 +138,7 @@
 
     L.push('    def detect_state(self):');
     if (detectStep) {
-      L.push(`        return ${locatorChain(detectStep, detectStep.selStrategy || opts.sel)}.is_visible()`);
+      L.push(`        return ${locatorChain(detectStep, opts.sel || detectStep.selStrategy)}.is_visible()`);
     } else {
       L.push('        # TODO: mark a step as detect_state in the recorder');
       L.push('        return False');
@@ -146,7 +146,7 @@
     L.push('');
 
     actionSteps.forEach((step, i) => {
-      const loc = locatorChain(step, step.selStrategy || opts.sel);
+      const loc = locatorChain(step, opts.sel || step.selStrategy);
       const m = methods[i];
       const arg = step.verb === 'fill' || step.verb === 'fill_rich' ? ', message' : '';
       L.push(`    def ${m}(self${arg}):`);
@@ -167,8 +167,41 @@
   // =====================================================================
   // Language-neutral locator model
   // =====================================================================
-  // A locator is { parts: [{k, ...}], tier, comment } rendered per language later.
+  // A locator is { parts: [{k, ...}], tier, used } rendered per language later.
+  // `used` = which strategy actually produced it (may differ from the selected one).
+  const KIND_TO_STRATEGY = { role: 'role', label: 'label', placeholder: 'placeholder', text: 'text', alt: 'alt_text', title: 'title', testid: 'test_id' };
   function locParts(step, strategy) {
+    const r = locPartsInner(step, strategy);
+    const last = r.parts.filter((p) => p.k !== 'nth' && p.k !== 'frame').pop();
+    let used = last ? KIND_TO_STRATEGY[last.k] : null;
+    if (last && last.k === 'locator') {
+      const sel = step.selector || {};
+      const tidAttr = sel.testIdAttr;
+      if (last.v.startsWith('xpath=') || /^\(*\/\//.test(last.v)) used = 'xpath';
+      else if (sel.css && last.v === sel.css.value) used = 'css';
+      else if (tidAttr && last.v.startsWith(`[${tidAttr}=`)) used = 'test_id';
+      else used = 'css';
+    }
+    return { ...r, used };
+  }
+
+  const STRATEGY_REASON = {
+    role: 'element has no ARIA role', label: 'element has no <label>/aria-label', placeholder: 'element has no placeholder',
+    text: 'element has no short text', alt_text: 'element has no alt attribute', title: 'element has no title attribute',
+    test_id: 'element has no test id attribute', css: 'no css', xpath: 'no xpath',
+  };
+  function fallbackNote(step, strategy, loc) {
+    if (!strategy || !loc.used || loc.used === strategy) return '';
+    const sel = step.selector || {};
+    const has = {
+      role: !!(sel.role && sel.role.role && ARIA_ROLES.has(sel.role.role)), label: !!sel.label, placeholder: !!sel.placeholder,
+      text: !!sel.text, alt_text: !!sel.alt, title: !!sel.title, test_id: !!sel.testId, css: true, xpath: true,
+    }[strategy];
+    const why = has ? `"${strategy}" matches several elements` : STRATEGY_REASON[strategy];
+    return `${why} → used ${loc.used}`;
+  }
+
+  function locPartsInner(step, strategy) {
     const sel = step.selector || {};
     const role = sel.role && sel.role.role && ARIA_ROLES.has(sel.role.role) ? sel.role : null;
     const css = sel.css, xpath = sel.xpath;
@@ -375,10 +408,13 @@
     let P = cfg.root, popups = 0;
     for (const step of steps) {
       if (!step.verb || step.isDetect || SNAP_SKIP.has(step.verb)) continue;
-      const loc = step.verb === 'goto' ? null : locParts(step, step.selStrategy || opts.sel);
+      const loc = step.verb === 'goto' ? null : locParts(step, opts.sel || step.selStrategy);
       const L = loc ? renderLoc(cfg.family, P, loc.parts) : null;
-      if (loc && loc.tier === 3 && opts.comments !== false) {
-        out.push(`${pad}${cfg.family === 'py' ? '#' : '//'} fallback locator: no unique semantic locator found`);
+      const cm = cfg.family === 'py' ? '#' : '//';
+      if (loc && opts.comments !== false) {
+        const note = fallbackNote(step, opts.sel, loc);
+        if (note) out.push(`${pad}${cm} ${note}`);
+        else if (loc.tier === 3 && loc.used !== opts.sel) out.push(`${pad}${cm} fallback locator: no unique semantic locator found`);
       }
       const stmt = statement(cfg, step, L, P);
       if (step.opensPopup) {
@@ -504,7 +540,7 @@
     if (detectSteps.length) {
       const lines = [];
       detectSteps.forEach((step, i) => {
-        const loc = renderLoc('py', 'self.app.page', locParts(step, step.selStrategy || strategy).parts);
+        const loc = renderLoc('py', 'self.app.page', locParts(step, strategy || step.selStrategy).parts);
         lines.push(`def ${i === 0 ? 'detect_state' : `detect_state_${i + 1}`}(self):`);
         lines.push(`    return ${loc}.is_visible()`);
         lines.push('');
@@ -516,7 +552,7 @@
     if (isVisibleSteps.length) {
       const lines = [];
       isVisibleSteps.forEach((step, i) => {
-        const loc = renderLoc('py', 'self.app.page', locParts(step, step.selStrategy || strategy).parts);
+        const loc = renderLoc('py', 'self.app.page', locParts(step, strategy || step.selStrategy).parts);
         lines.push(`def ${i === 0 ? 'is_visible' : `is_visible_${i + 1}`}(self):`);
         lines.push(`    ${loc}.wait_for(state="visible", timeout=10000)`);
         lines.push('');
@@ -540,7 +576,7 @@
     const seen = new Set();
     const locators = steps
       .filter((s) => s.verb && s.verb !== 'goto')
-      .map((s) => renderLoc('py', 'page', locParts(s, s.selStrategy || opts.sel).parts))
+      .map((s) => renderLoc('py', 'page', locParts(s, opts.sel || s.selStrategy).parts))
       .filter((e) => !seen.has(e) && seen.add(e));
 
     const extras = buildSpecialSnaps(steps, opts);

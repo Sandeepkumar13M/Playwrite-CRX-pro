@@ -109,8 +109,6 @@ function selectorKey(step) {
 
 function addStep(action) {
   const a = { ...action };
-  // Selector strategy only changes the preference for newly recorded steps.
-  if (!a.selStrategy && settings.sel) a.selStrategy = settings.sel;
   if (a.html && a.html.length > MAX_HTML) a.html = a.html.slice(0, MAX_HTML) + '\n<!-- truncated -->';
   const last = steps[steps.length - 1];
   const isFill = a.verb === 'fill' || a.verb === 'fill_rich';
