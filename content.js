@@ -29,20 +29,48 @@
   const pending = new Map();
   let reqCounter = 0;
 
+  // ---------- Shadow DOM aware queries ----------
+  // Playwright's CSS and get_by_* locators pierce OPEN shadow roots, so we do the same.
+  function shadowRoots(root) {
+    const out = [root];
+    const walk = (r) => {
+      if (r.shadowRoot) { out.push(r.shadowRoot); walk(r.shadowRoot); }
+      for (const el of r.querySelectorAll('*')) if (el.shadowRoot) { out.push(el.shadowRoot); walk(el.shadowRoot); }
+    };
+    try { walk(root); } catch (_) {}
+    return out;
+  }
+  function deepQueryAll(root, sel) {
+    const res = [];
+    for (const r of shadowRoots(root)) {
+      try { for (const el of r.querySelectorAll(sel)) if (!res.includes(el)) res.push(el); } catch (_) { return []; }
+    }
+    return res;
+  }
+
   function iframeSelectorFor(el) {
-    // Build a selector for an <iframe> element as seen from its parent doc.
-    if (el.id) return `#${cssEscape(el.id)}`;
-    if (el.name) return `iframe[name="${attrEscape(el.name)}"]`;
+    // Build a STABLE selector for an <iframe>/<frame> as seen from its parent document:
+    // stable id > name > title > src without query/hash (tokens change) > position.
+    const doc = el.ownerDocument;
+    const tag = el.tagName.toLowerCase();
+    const cands = [];
+    if (el.id && !isDynamicId(el.id)) cands.push(`#${cssEscape(el.id)}`);
+    const name = el.getAttribute('name');
+    if (name && !isDynamicId(name)) cands.push(`${tag}[name="${attrEscape(name)}"]`);
+    const title = el.getAttribute('title');
+    if (title) cands.push(`${tag}[title="${attrEscape(title)}"]`);
     const src = el.getAttribute('src');
-    if (src) return `iframe[src="${attrEscape(src)}"]`;
-    // positional fallback
-    const all = Array.from(el.ownerDocument.querySelectorAll('iframe'));
-    const idx = all.indexOf(el);
-    return `iframe >> nth=${idx}`;
+    if (src && !/^(data|javascript|blob|about):/i.test(src)) {
+      const stable = src.split(/[?#]/)[0];
+      if (stable && stable.length <= 200) cands.push(stable === src ? `${tag}[src="${attrEscape(src)}"]` : `${tag}[src^="${attrEscape(stable)}"]`);
+    }
+    for (const c of cands) if (deepQueryAll(doc, c).length === 1) return c;
+    const all = deepQueryAll(doc, tag);
+    return `${tag} >> nth=${Math.max(0, all.indexOf(el))}`;
   }
 
   function childFrameElement(source) {
-    for (const f of document.querySelectorAll('iframe, frame')) {
+    for (const f of deepQueryAll(document, 'iframe, frame')) {
       if (f.contentWindow === source) return f;
     }
     return null;
@@ -73,11 +101,8 @@
 
     if (d.__t === FRAME_REQ) {
       // A child is asking: which iframe element in THIS document is you?
-      const frames = document.querySelectorAll('iframe, frame');
-      let selector = null;
-      for (const f of frames) {
-        if (f.contentWindow === e.source) { selector = iframeSelectorFor(f); break; }
-      }
+      const f = childFrameElement(e.source);
+      const selector = f ? iframeSelectorFor(f) : null;
       if (!selector) return; // not our child (or answered by another copy)
       // Ask our own parent to continue building the chain above us.
       if (window.parent !== window) {
@@ -129,10 +154,19 @@
   function attrEscape(s) {
     return String(s).replace(/\\/g, '\\\\').replace(/"/g, '\\"');
   }
+  // Generated ids change on every page load / build — never build selectors on them.
+  // React useId (":r1a:"), Radix / Headless UI / MUI / Ember / Angular ids, GUIDs, hashes, long numbers.
   function isDynamicId(id) {
     if (!id) return true;
-    // Heuristic: long hash/guid-like ids are treated as unstable.
-    return /(^[a-f0-9]{8,}$)|([a-f0-9]{6,}-[a-f0-9]{4,})|(_\d{4,})/i.test(id);
+    return /(^[a-f0-9]{8,}$)|([a-f0-9]{6,}-[a-f0-9]{4,})|(_\d{4,})|\d{5,}|:/i.test(id) ||
+      /^(radix-|headlessui-|mui-|react-|rc[-_]|ember\d|ext-|gwt-|ng-|cdk-|mat-|el-id|__next|yui_|jsx-|uid-|id-\d)/i.test(id);
+  }
+
+  // Utility-CSS (Tailwind, Bootstrap helpers) and hashed CSS-module / CSS-in-JS classes are unstable.
+  const UTILITY_CLASS = /^(?:[a-z0-9-]+:|-?(?:flex|grid|block|inline|hidden|relative|absolute|fixed|sticky|static|items|justify|content|self|place|gap|space|p[xytrbl]?|m[xytrbl]?|w|h|min|max|size|text|font|leading|tracking|bg|border|rounded|shadow|ring|outline|opacity|z|top|left|right|bottom|inset|overflow|cursor|select|pointer|transition|duration|ease|delay|animate|transform|translate|rotate|scale|origin|truncate|whitespace|break|sr|group|peer|dark|hover|focus|active|col|row|order|grow|shrink|basis|object|aspect|fill|stroke|decoration|underline|list|align|visible|invisible|container|d|float|clearfix|mx-auto|btn-sm|btn-lg)(?:-|$))/;
+  const HASHED_CLASS = /^(?:css|sc|jsx|emotion|styled|svelte|astro|tw)-|[_-](?=[a-zA-Z0-9]*\d)[a-zA-Z0-9]{5,}$|[[\]:/!.%#]|\d{3,}/;
+  function stableClasses(n) {
+    return Array.from(n.classList || []).filter((c) => c.length <= 32 && !UTILITY_CLASS.test(c) && !HASHED_CLASS.test(c));
   }
 
   // Test id: the configured attribute first, then common fallbacks.
@@ -162,17 +196,37 @@
     return 'textbox';
   }
 
-  function accessibleName(el) {
+  // Roles that are never named by their content (accname spec / Playwright): a text box's
+  // "content" is what the user typed, a listbox's content is its options, ...
+  const NO_NAME_FROM_CONTENT = new Set(['textbox', 'searchbox', 'combobox', 'spinbutton', 'slider', 'listbox',
+    'tree', 'grid', 'table', 'list', 'menu', 'menubar', 'tablist', 'toolbar', 'radiogroup', 'group', 'region', 'navigation', 'main', 'form', 'dialog']);
+
+  // Text like the browser shows it: block-level children are separated by spaces
+  // ("Dev Test" + "dev@x.dev" → "Dev Test dev@x.dev"), hidden text is left out.
+  function visibleText(el) {
+    const t = typeof el.innerText === 'string' && el.isConnected ? el.innerText : el.textContent;
+    return (t || '').replace(/\s+/g, ' ').trim();
+  }
+
+  function accessibleName(el, role) {
     const aria = el.getAttribute('aria-label');
-    if (aria) return aria.trim();
-    if (el.labels && el.labels.length) return el.labels[0].textContent.trim();
+    if (aria && aria.trim()) return aria.trim().replace(/\s+/g, ' ');
+    const lb = el.getAttribute('aria-labelledby');
+    if (lb) {
+      const doc = el.getRootNode();
+      const txt = lb.split(/\s+/).map((id) => doc.getElementById && doc.getElementById(id)).filter(Boolean).map(visibleText).join(' ').trim();
+      if (txt) return txt;
+    }
+    if (el.labels && el.labels.length) return visibleText(el.labels[0]) || null;
     const ph = el.getAttribute('placeholder');
-    if (ph) return ph.trim();
+    if (ph && ph.trim()) return ph.trim();
     if (el.tagName === 'IMG') return (el.getAttribute('alt') || '').trim() || null;
     if (el.tagName === 'INPUT' && /^(submit|button|reset)$/i.test(el.type || '')) return (el.value || '').trim() || null;
-    const txt = (el.textContent || '').trim().replace(/\s+/g, ' ');
-    if (txt && txt.length <= 60) return txt;
-    return null;
+    const title = (el.getAttribute('title') || '').trim() || null;
+    if (NO_NAME_FROM_CONTENT.has(role) || isFormControl(el) || el.isContentEditable) return title;
+    const txt = visibleText(el);
+    if (txt && txt.length <= 80) return txt;
+    return title;
   }
 
   function labelText(el) {
@@ -190,55 +244,149 @@
     if (el.tagName === 'INPUT') role = inputRole(el);
     if (el.getAttribute('role')) role = el.getAttribute('role').trim().split(/\s+/)[0];
     if (!role) return null;
-    const name = accessibleName(el);
+    const name = accessibleName(el, role);
     return { kind: 'role', role, name };
   }
 
-  function cssSelector(el) {
-    if (el.id && !isDynamicId(el.id)) return { kind: 'css', value: `#${cssEscape(el.id)}` };
-    const tid = testIdOf(el);
-    if (tid) return { kind: 'css', value: `[${tid.attr}="${attrEscape(tid.value)}"]` };
-    if (el.id) return { kind: 'css', value: `#${cssEscape(el.id)}` };
-    // build a short path
-    const parts = [];
-    let node = el;
-    while (node && node.nodeType === 1 && parts.length < 4) {
-      let part = node.tagName.toLowerCase();
-      if (node.classList.length) {
-        const cls = Array.from(node.classList).slice(0, 2).map(c => '.' + cssEscape(c)).join('');
-        part += cls;
-      }
-      const parent = node.parentElement;
-      if (parent) {
-        const same = Array.from(parent.children).filter(c => c.tagName === node.tagName);
-        if (same.length > 1) part += `:nth-of-type(${same.indexOf(node) + 1})`;
-      }
-      parts.unshift(part);
-      if (node.id && !isDynamicId(node.id)) { parts[0] = `#${cssEscape(node.id)}`; break; }
-      node = node.parentElement;
-    }
-    return { kind: 'css', value: parts.join(' > ') };
+  // Attributes that identify an element and survive redesigns (in priority order).
+  const STABLE_ATTRS = ['name', 'aria-label', 'placeholder', 'title', 'alt', 'for', 'data-id', 'data-name', 'data-key', 'aria-controls', 'role', 'type', 'value'];
+  function attrUsable(a, v) {
+    if (!v || v.length > 80 || /\n/.test(v)) return false;
+    if ((a === 'aria-controls' || a === 'for' || a.startsWith('data-')) && isDynamicId(v)) return false;
+    return true;
   }
 
+  // CSS selector, most stable first: #id → test id → [stable attribute] → .stable-class → short
+  // path anchored on the nearest ancestor that has one of those (never on utility classes).
+  function cssSelector(el) {
+    const root = el.getRootNode();
+    const unique = (sel) => { try { const l = root.querySelectorAll(sel); return l.length === 1 && l[0] === el; } catch (_) { return false; } };
+    const own = ownCssCandidates(el);
+    for (const c of own) if (unique(c)) return { kind: 'css', value: c };
+    // combine two attributes, e.g. input[type="email"][name="q"]
+    const tag = el.tagName.toLowerCase();
+    const attrs = own.filter((c) => c.startsWith(tag + '['));
+    for (let i = 0; i < attrs.length; i++) for (let j = i + 1; j < attrs.length; j++) {
+      const c = attrs[i] + attrs[j].slice(tag.length);
+      if (unique(c)) return { kind: 'css', value: c };
+    }
+    const parts = [];
+    let positionalOnly = null; // unique, but only by position (nth-of-type) — keep looking for an anchor
+    let node = el;
+    while (node && node.nodeType === 1 && node !== document.documentElement) {
+      const cands = ownCssCandidates(node);
+      // anchor: an ancestor that is unique by itself → shortest unique path below it
+      const anchor = node !== el && cands.find((c) => { try { return root.querySelectorAll(c).length === 1; } catch (_) { return false; } });
+      if (anchor) {
+        for (let k = 1; k <= parts.length; k++) {
+          const sel = `${anchor} ${parts.slice(parts.length - k).join(' > ')}`;
+          if (unique(sel)) return { kind: 'css', value: sel };
+        }
+      }
+      let seg = cands.find((c) => !c.startsWith('#') && !c.startsWith('[')) || node.tagName.toLowerCase();
+      const parent = node.parentElement || (node.parentNode && node.parentNode.host ? null : node.parentNode);
+      if (parent && parent.children) {
+        let same = [];
+        try { same = Array.from(parent.querySelectorAll(':scope > ' + seg)); } catch (_) {}
+        if (same.length > 1) {
+          const sib = Array.from(parent.children).filter((c) => c.tagName === node.tagName);
+          seg = `${seg}:nth-of-type(${sib.indexOf(node) + 1})`;
+        }
+      }
+      parts.unshift(seg);
+      const path = parts.join(' > ');
+      if (!positionalOnly && unique(path)) {
+        if (!path.includes(':nth-of-type')) return { kind: 'css', value: path };
+        positionalOnly = path;
+      }
+      if (!node.parentElement) break;
+      node = node.parentElement;
+    }
+    return { kind: 'css', value: positionalOnly || parts.join(' > ') };
+  }
+
+  // Landmarks make good anchors when they are unique on the page.
+  const LANDMARKS = new Set(['main', 'nav', 'header', 'footer', 'aside', 'form', 'dialog', 'section', 'article', 'table', 'ul', 'ol']);
+
+  function ownCssCandidates(n) {
+    const tag = n.tagName.toLowerCase();
+    const out = [];
+    if (n.id && !isDynamicId(n.id)) out.push(`#${cssEscape(n.id)}`);
+    const tid = testIdOf(n);
+    if (tid) out.push(`[${tid.attr}="${attrEscape(tid.value)}"]`);
+    for (const a of STABLE_ATTRS) {
+      const v = n.getAttribute(a);
+      if (attrUsable(a, v)) out.push(`${tag}[${a}="${attrEscape(v)}"]`);
+    }
+    if (tag === 'a') {
+      const href = n.getAttribute('href');
+      if (href && href.length <= 100 && !/[?#]|^javascript:/i.test(href)) out.push(`a[href="${attrEscape(href)}"]`);
+    }
+    const cls = stableClasses(n).slice(0, 2);
+    if (cls.length) out.push(tag + cls.map((c) => '.' + cssEscape(c)).join(''));
+    if (LANDMARKS.has(tag)) out.push(tag);
+    return out;
+  }
+
+  // XPath predicates for one element, most stable first.
+  function xpPredicates(n) {
+    const out = [];
+    if (n.id && !isDynamicId(n.id)) out.push(`@id=${xpLit(n.id)}`);
+    const tid = testIdOf(n);
+    if (tid) out.push(`@${tid.attr}=${xpLit(tid.value)}`);
+    for (const a of ['name', 'aria-label', 'placeholder', 'title', 'alt', 'data-id', 'data-name']) {
+      const v = n.getAttribute(a);
+      if (attrUsable(a, v)) out.push(`@${a}=${xpLit(v)}`);
+    }
+    const txt = norm(n.textContent);
+    if (txt && txt.length <= 50 && !isFormControl(n) && !n.isContentEditable) out.push(`normalize-space(.)=${xpLit(txt)}`);
+    for (const c of stableClasses(n).slice(0, 1)) out.push(`contains(concat(' ', normalize-space(@class), ' '), ${xpLit(' ' + c + ' ')})`);
+    return out;
+  }
+
+  // Relative XPath (never /html[1]/body[1]/... unless nothing else exists):
+  // //tag[@attr='…'] → //tag[normalize-space(.)='text'] → //anchor//relative/path
   function xpathSelector(el) {
     if (!el || el.nodeType !== 1) return null;
-    const id = el.getAttribute('id');
-    if (id) return { kind: 'xpath', value: `//*[@id="${attrEscape(id)}"]` };
-    const parts = [];
+    if (el.getRootNode() !== document) return null; // XPath cannot reach into shadow DOM
+    const snap = (xp) => { try { return document.evaluate(xp, document, null, XPathResult.ORDERED_NODE_SNAPSHOT_TYPE, null); } catch (_) { return null; } };
+    const isOnly = (xp, node) => { const s = snap(xp); return !!s && s.snapshotLength === 1 && s.snapshotItem(0) === node; };
+    const tag = el.tagName.toLowerCase();
+    for (const p of xpPredicates(el)) {
+      const xp = p.startsWith('@id=') ? `//*[${p}]` : `//${tag}[${p}]`;
+      if (isOnly(xp, el)) return { kind: 'xpath', value: xp };
+    }
+    const steps = [];
+    let positionalOnly = null; // unique only by position ([2]) — keep looking for an anchor
     let node = el;
-    while (node && node.nodeType === 1) {
-      const tag = node.tagName.toLowerCase();
-      const parent = node.parentElement;
-      let idx = 1;
-      if (parent) {
-        const same = Array.from(parent.children).filter(c => c.tagName === node.tagName);
-        idx = same.indexOf(node) + 1;
+    while (node && node.nodeType === 1 && node !== document.documentElement) {
+      const t = node.tagName.toLowerCase();
+      if (node !== el) {
+        // container text changes with its content — anchors use attributes/classes only
+        const anchors = xpPredicates(node).filter((p) => !p.startsWith('normalize-space'))
+          .map((p) => (p.startsWith('@id=') ? `//*[${p}]` : `//${t}[${p}]`));
+        if (LANDMARKS.has(t)) anchors.push(`//${t}`);
+        for (const anchor of anchors) {
+          if (!isOnly(anchor, node)) continue;
+          // shortest relative path below the anchor
+          for (let k = 1; k <= steps.length; k++) {
+            const tail = steps.slice(steps.length - k);
+            const xp = k === steps.length ? `${anchor}/${tail.join('/')}` : `${anchor}//${tail.join('/')}`;
+            if (isOnly(xp, el)) return { kind: 'xpath', value: xp };
+          }
+        }
       }
-      parts.unshift(`${tag}[${idx}]`);
-      if (!parent) break;
+      const parent = node.parentElement;
+      const same = parent ? Array.from(parent.children).filter((c) => c.tagName === node.tagName) : [node];
+      steps.unshift(same.length > 1 ? `${t}[${same.indexOf(node) + 1}]` : t);
+      const rel = `//${steps.join('/')}`;
+      if (!positionalOnly && isOnly(rel, el)) {
+        if (!/\[\d+\]/.test(rel)) return { kind: 'xpath', value: rel };
+        positionalOnly = rel;
+      }
       node = parent;
     }
-    return { kind: 'xpath', value: '/' + parts.join('/') };
+    return { kind: 'xpath', value: positionalOnly || `/html/${steps.join('/')}` };
   }
 
   // If user clicks nested text inside a heading, prefer the heading itself.
@@ -262,7 +410,8 @@
     const css = cssSelector(target);
     const xpath = xpathSelector(target);
     // Form controls have no meaningful text (a <select>'s text is all its options glued together).
-    const text = isFormControl(target) ? '' : (target.textContent || '').trim().replace(/\s+/g, ' ').slice(0, 80);
+    // Editable rich-text areas: their text is what the user typed — never a locator.
+    const text = isFormControl(target) || target.isContentEditable ? '' : (target.textContent || '').trim().replace(/\s+/g, ' ').slice(0, 80);
     const placeholder = (target.getAttribute('placeholder') || '').trim() || null;
     const alt = (target.getAttribute('alt') || '').trim() || null;
     const title = (target.getAttribute('title') || '').trim() || null;
@@ -271,6 +420,8 @@
     const label = labelText(target);
     const meta = selectorMeta(target, { role, label, placeholder, text, alt, title, tid, css });
     try { meta.uniq = uniqInfo(target, { role, label, placeholder, text, alt, title, tid, css, xpath }); } catch (_) {}
+    let selenium = null;
+    try { selenium = seleniumInfo(target, { role, label, placeholder, text, alt, title, tid, css, xpath }); } catch (_) {}
     if (target.tagName === 'INPUT') {
       const type = (target.getAttribute('type') || '').toLowerCase();
       if (type === 'checkbox' || type === 'radio') {
@@ -290,7 +441,86 @@
       testId,
       testIdAttr: tid ? tid.attr : null,
       meta,
+      selenium,
     };
+  }
+
+  // ---------- Selenium locators (By.ID / NAME / CSS_SELECTOR / XPATH) ----------
+  function xpLit(s) {
+    s = String(s);
+    if (!s.includes("'")) return `'${s}'`;
+    if (!s.includes('"')) return `"${s}"`;
+    return 'concat(' + s.split("'").map((p) => `'${p}'`).join(`, "'", `) + ')';
+  }
+  // Every candidate is counted on the page, like the Playwright ones, so codegen can pick a unique one.
+  // Elements in shadow DOM: Selenium can only use CSS inside a shadow root, reached via the host chain.
+  function seleniumInfo(t, s) {
+    const root = t.getRootNode();
+    const inShadow = root !== document;
+    const pos = (list) => {
+      let i = list.indexOf(t);
+      if (i < 0) i = list.findIndex((e) => t.contains(e));
+      return { n: list.length, i };
+    };
+    const countCss = (css) => { try { return pos(Array.from(root.querySelectorAll(css))); } catch (_) { return null; } };
+    const countXp = (xp) => {
+      if (inShadow) return null;
+      try {
+        const r = document.evaluate(xp, document, null, XPathResult.ORDERED_NODE_SNAPSHOT_TYPE, null);
+        const l = [];
+        for (let k = 0; k < r.snapshotLength; k++) l.push(r.snapshotItem(k));
+        return pos(l);
+      } catch (_) { return null; }
+    };
+    const cands = {};
+    const add = (key, by, v) => {
+      if (!v || cands[key]) return;
+      const m = by === 'xpath' ? countXp(v)
+        : by === 'id' ? countCss(`#${cssEscape(v)}`)
+        : by === 'name' ? countCss(`[name="${attrEscape(v)}"]`)
+        : countCss(v);
+      if (m && m.n) cands[key] = { by, v, ...m };
+    };
+    const tag = t.tagName.toLowerCase();
+    const aria = t.getAttribute('aria-label');
+    const textEq = (x) => `normalize-space(.)=${xpLit(norm(x))}`;
+
+    if (t.id && !isDynamicId(t.id)) add('id', 'id', t.id);
+    const nm = t.getAttribute('name');
+    if (nm && isFormControl(t)) add('name', 'name', nm);
+    if (s.tid) add('test_id', 'css', `[${s.tid.attr}="${attrEscape(s.tid.value)}"]`);
+    if (s.placeholder) add('placeholder', 'css', `${tag}[placeholder="${attrEscape(s.placeholder)}"]`);
+    if (s.alt) add('alt_text', 'css', `${tag}[alt="${attrEscape(s.alt)}"]`);
+    if (s.title) add('title', 'css', `${tag}[title="${attrEscape(s.title)}"]`);
+
+    const lab = t.labels && t.labels[0];
+    if (lab && !inShadow) {
+      const lt = norm(lab.textContent);
+      if (lab.htmlFor) add('label', 'xpath', `//*[@id=//label[${textEq(lt)}]/@for]`);
+      else add('label', 'xpath', `//label[${textEq(lt)}]//${tag}`);
+    } else if (aria) add('label', 'css', `${tag}[aria-label="${attrEscape(aria)}"]`);
+
+    if (s.role && s.role.name) {
+      const name = s.role.name;
+      if (aria) add('role', 'css', `${tag}[aria-label="${attrEscape(aria)}"]`);
+      else if (tag === 'img') add('role', 'css', `img[alt="${attrEscape(name)}"]`);
+      else if (tag === 'input' && /^(submit|button|reset)$/i.test(t.type) && t.value) add('role', 'css', `input[value="${attrEscape(t.value)}"]`);
+      else if (lab && !inShadow) add('role', 'xpath', cands.label ? cands.label.v : `//label[${textEq(lab.textContent)}]//${tag}`);
+      else if (t.getAttribute('placeholder') && norm(t.getAttribute('placeholder')) === norm(name)) add('role', 'css', `${tag}[placeholder="${attrEscape(t.getAttribute('placeholder'))}"]`);
+      else if (!inShadow && norm(t.textContent) === norm(name)) add('role', 'xpath', `//${tag}[${textEq(name)}]`);
+    }
+    if (s.text && !inShadow && !isFormControl(t)) {
+      // deepest element whose whole text is the value
+      add('text', 'xpath', `//*[${textEq(s.text)} and not(*[${textEq(s.text)}])]`);
+    }
+    if (s.css && s.css.value) add('css', 'css', s.css.value);
+    if (s.xpath && s.xpath.value) add('xpath', 'xpath', s.xpath.value);
+
+    // open shadow root chain: CSS for each host, outermost first
+    const shadow = [];
+    let r = root;
+    while (r && r !== document && r.host) { shadow.unshift(cssSelector(r.host).value); r = r.host.getRootNode(); }
+    return { cands, shadow };
   }
 
   // For every candidate locator: how many elements it matches on this page (Playwright
@@ -400,12 +630,6 @@
     return null;
   }
 
-  function opensPopup(el) {
-    // Best effort: anchors that open a new tab. window.open() can't be
-    // reliably detected from a content script.
-    const a = el.closest && el.closest('a[target="_blank"], a[target="_new"]');
-    return !!a;
-  }
 
   // Quick, cheap locator preview for the hover tooltip (no match counting).
   // Follows the selected strategy pill (falls back in Playwright's priority order).
@@ -488,8 +712,11 @@
   }
 
   async function emit(action) {
+    // Time of the user action: iframe actions need a moment to compute their frame path,
+    // so the background orders steps by this, not by arrival.
+    const t = Date.now();
     const framePath = await getFramePath();
-    send({ type: 'ACTION', action: { ...action, framePath, url: location.href } });
+    send({ type: 'ACTION', action: { ...action, framePath, url: location.href, t } });
   }
 
   function copyText(text) {
@@ -570,10 +797,18 @@
   }
 
   // ---------- Event handlers ----------
+  // The real element under the pointer, even inside (open) shadow DOM.
+  function realTarget(e) {
+    let t = (e.composedPath && e.composedPath()[0]) || e.target;
+    if (t && t.nodeType === 3) t = t.parentElement;
+    return t && t.nodeType === 1 ? t : null;
+  }
+
   function onMouseOver(e) {
     if (!alive()) return teardown();
     if (!recording && !armed) return;
-    highlight(e.target);
+    const el = realTarget(e);
+    if (el && !isOverlay(el)) highlight(el);
   }
 
   function isChoiceInput(el) {
@@ -582,43 +817,103 @@
     return t === 'checkbox' || t === 'radio';
   }
 
-  function onClick(e) {
-    if (!alive()) return teardown();
-    if (!recording && !armed) return;
-    const el = e.target;
+  // Click recording happens at POINTER-DOWN time:
+  //  - modals/menus that close or re-render on mousedown (e.g. "Cancel"/"Proceed" dialogs)
+  //    would otherwise send the click to the backdrop, or no click at all;
+  //  - when mousedown and mouseup hit different elements, the browser sends the click
+  //    to their common ancestor — we still record what the user pressed.
+  let downInfo = null;      // { el, action, at }
+  let swallowGesture = false; // swallow the rest of ONE pick gesture (mouseup/click), nothing after it
 
-    // one-shot armed modes: capture this element, then disarm everywhere
-    if (armed) {
-      e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation();
-      const mode = armed;
-      armed = null; clearHL();
-      emitModeAction(mode, el);
-      send({ type: 'MODE_DONE', mode });
-      return;
-    }
-
-    flushFill();
+  function clickActionFor(el) {
+    if (!el || isOverlay(el)) return null;
     // Checkboxes / radios / <select> are recorded by the change handler
     // (check / uncheck / select_option) — don't add a duplicate click.
-    if (isChoiceInput(el) || el.tagName === 'SELECT' || el.tagName === 'OPTION') return;
+    if (isChoiceInput(el) || el.tagName === 'SELECT' || el.tagName === 'OPTION') return null;
     const lbl = el.closest && el.closest('label');
-    if (lbl && lbl.control && isChoiceInput(lbl.control)) return;
-
-    // Record the click for EVERY other element, including text inputs/textareas/contenteditable.
-    // Typing is captured separately, so click + fill become two ordered steps.
-    emit({ verb: 'click', selector: buildSelector(el), tag: el.tagName, opensPopup: opensPopup(el) });
+    if (lbl && lbl.control && isChoiceInput(lbl.control)) return null;
+    // New tabs / popup windows are detected by the background (chrome.webNavigation),
+    // which then marks this step as "opens popup" — works for links, window.open, Ctrl+click, ...
+    return { verb: 'click', selector: buildSelector(el), tag: resolveTarget(el).tagName };
   }
 
-  // Swallow mousedown/up while armed so menus/links don't react to the pick click.
-  function onMouseDownUp(e) {
-    if (!armed || !alive()) return;
+  function finishArmed(e, el) {
     e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation();
+    const mode = armed;
+    armed = null; clearHL();
+    swallowGesture = e.type === 'pointerdown'; // a click event ends the gesture itself
+    if (el) emitModeAction(mode, el);
+    send({ type: 'MODE_DONE', mode });
+  }
+
+  function onPointerDown(e) {
+    if (!alive()) return teardown();
+    const el = realTarget(e);
+    swallowGesture = false; // a new gesture starts
+    if (armed) { if (e.button === 0) finishArmed(e, el); return; }
+    // left click, or middle click (opens links in a new tab)
+    if (!recording || (e.button !== 0 && e.button !== 1) || !e.isTrusted || !el) return;
+    flushFill();
+    // A previous press whose click never arrived (its element vanished on mousedown):
+    // record it now, before this new one, so nothing is lost and order is kept.
+    if (downInfo) { const prev = downInfo; downInfo = null; if (prev.action) emit(prev.action); }
+    // Build the selector NOW, while the element still exists.
+    const action = clickActionFor(el);
+    if (action) {
+      // Ctrl/Cmd+click and Shift+click open links in a new tab / window — keep them.
+      const mods = [];
+      if (e.ctrlKey || e.metaKey) mods.push('ControlOrMeta');
+      if (e.shiftKey) mods.push('Shift');
+      if (e.altKey) mods.push('Alt');
+      if (mods.length) action.modifiers = mods;
+      if (e.button === 1) action.button = 'middle';
+    }
+    downInfo = { el, action, at: Date.now() };
+  }
+
+  function onPointerUp(e) {
+    if (swallowGesture) {
+      e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation();
+      setTimeout(() => { swallowGesture = false; }, 300); // in case no click event follows
+      return;
+    }
+    if (!recording || !downInfo) return;
+    const d = downInfo;
+    // If no click event arrives (element removed on mousedown), record it anyway.
+    setTimeout(() => { if (downInfo === d) { downInfo = null; if (d.action) emit(d.action); } }, 600);
+  }
+
+  // Swallow mousedown/mouseup that belong to a pick gesture so menus/links don't react.
+  function onMouseDownUp(e) {
+    if (!alive()) return;
+    if (armed || swallowGesture) { e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation(); }
+  }
+
+  function onClick(e) {
+    if (!alive()) return teardown();
+    if (swallowGesture) { swallowGesture = false; e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation(); return; }
+    if (armed) { finishArmed(e, realTarget(e)); return; } // e.g. keyboard-activated pick
+    if (!recording) return;
+
+    if (downInfo && Date.now() - downInfo.at < 3000) {
+      const d = downInfo;
+      downInfo = null;
+      if (d.action) emit(d.action);
+      return;
+    }
+    // No pointer-down seen: ignore clicks made by page scripts (el.click()) and
+    // keyboard activation (Enter/Space are recorded as "press").
+    if (!e.isTrusted || e.detail === 0) return;
+    flushFill();
+    const a = clickActionFor(realTarget(e));
+    if (a) emit(a);
   }
 
   function onChange(e) {
     if (!alive()) return teardown();
     if (!recording) return;
-    const el = e.target;
+    const el = realTarget(e);
+    if (!el) return;
     if (el.tagName === 'SELECT') {
       flushFill();
       const values = Array.from(el.selectedOptions || []).map(o => o.value);
@@ -635,8 +930,9 @@
 
   function onInput(e) {
     if (!alive()) return teardown();
-    if (!recording) return;
-    const el = e.target;
+    if (!recording || !e.isTrusted) return;
+    const el = realTarget(e);
+    if (!el) return;
     if ((el.tagName === 'INPUT' || el.tagName === 'TEXTAREA') && !isChoiceInput(el)) {
       scheduleFill(el);
     } else if (el.isContentEditable) {
@@ -649,10 +945,14 @@
 
   function onBlur(e) {
     if (!recording) return;
-    if (pendingFill && pendingFill.el === e.target) flushFill();
+    if (pendingFill && pendingFill.el === realTarget(e)) flushFill();
   }
 
-  const PRESS_KEYS = new Set(['Enter', 'Tab', 'Escape']);
+  const PRESS_KEYS = new Set(['Enter', 'Tab', 'Escape', ' ']);
+  function isEditable(el) {
+    return !!el && (el.isContentEditable || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT' ||
+      (el.tagName === 'INPUT' && !/^(button|submit|reset|checkbox|radio|image|file|color|range)$/i.test(el.type || '')));
+  }
   function onKeyDown(e) {
     if (!alive()) return teardown();
     if (armed && e.key === 'Escape') {
@@ -662,27 +962,31 @@
       send({ type: 'MODE_CANCELLED', mode });
       return;
     }
-    if (!recording || !PRESS_KEYS.has(e.key)) return;
-    if (e.key === 'Enter' && e.target && e.target.tagName === 'TEXTAREA') return; // newline, part of fill
+    if (!recording || !e.isTrusted || !PRESS_KEYS.has(e.key)) return;
+    const el = realTarget(e);
+    if (!el || el === document.body || el === document.documentElement) return;
+    if (e.key === 'Enter' && el.tagName === 'TEXTAREA') return; // newline, part of fill
+    if (e.key === ' ' && isEditable(el)) return;               // typing a space
     flushFill();
-    const el = e.target === document.body || !e.target ? null : e.target;
-    if (!el) return;
-    let key = e.key;
+    let key = e.key === ' ' ? 'Space' : e.key;
     if (e.shiftKey && key === 'Tab') key = 'Shift+Tab';
     emit({ verb: 'press', selector: buildSelector(el), value: key, tag: el.tagName });
   }
 
-  function onContextMenu(e) { lastContextTarget = e.target; }
+  function onContextMenu(e) { lastContextTarget = realTarget(e); }
 
+  // Capture phase on WINDOW: we run before page / other-extension listeners that call
+  // stopPropagation() on document or window (common in modals and overlays).
   const listeners = [
-    ['mouseover', onMouseOver], ['click', onClick], ['mousedown', onMouseDownUp],
-    ['mouseup', onMouseDownUp], ['input', onInput], ['change', onChange],
-    ['blur', onBlur], ['keydown', onKeyDown], ['contextmenu', onContextMenu],
+    ['mouseover', onMouseOver], ['pointerdown', onPointerDown], ['pointerup', onPointerUp],
+    ['mousedown', onMouseDownUp], ['mouseup', onMouseDownUp], ['click', onClick],
+    ['input', onInput], ['change', onChange], ['blur', onBlur], ['keydown', onKeyDown],
+    ['contextmenu', onContextMenu],
   ];
-  listeners.forEach(([t, fn]) => document.addEventListener(t, fn, true));
+  listeners.forEach(([t, fn]) => window.addEventListener(t, fn, true));
 
   function teardown() {
-    listeners.forEach(([t, fn]) => document.removeEventListener(t, fn, true));
+    listeners.forEach(([t, fn]) => window.removeEventListener(t, fn, true));
     window.removeEventListener('message', onWindowMessage);
     clearHL();
     recording = false; armed = null;
@@ -697,7 +1001,7 @@
   function isOverlay(n) { return n === hoverBox || n === tip; }
 
   function queryPart(scope, p) {
-    const all = (sel) => { try { return Array.from(scope.querySelectorAll(sel)); } catch (_) { return []; } };
+    const all = (sel) => deepQueryAll(scope, sel);
     // exact: full, case-sensitive match (whitespace normalised); default: case-insensitive "contains"
     const hasCI = p.exact ? (hay, needle) => norm(hay) === norm(needle) : hasCILoose;
     switch (p.k) {
@@ -716,10 +1020,13 @@
         return all(v);
       }
       case 'role':
+        // Like Playwright's get_by_role: elements hidden from accessibility don't count
+        // (display:none, visibility:hidden, aria-hidden="true", hidden, inert) — e.g. the
+        // duplicate profile button ChatGPT keeps in its collapsed sidebar.
         return all('*').filter((n) => {
           if (isOverlay(n)) return false;
           const r = roleSelector(n);
-          return r && r.role === p.role && (!p.name || hasCI(r.name || '', p.name));
+          return r && r.role === p.role && (!p.name || hasCI(r.name || '', p.name)) && !hiddenForA11y(n);
         });
       case 'label': return all('input,textarea,select,[aria-label]').filter((n) => { const t = labelText(n); return t && hasCI(t, p.v); });
       case 'placeholder': return all('[placeholder]').filter((n) => hasCI(n.getAttribute('placeholder'), p.v));
@@ -733,6 +1040,15 @@
       }
       default: return [];
     }
+  }
+
+  function hiddenForA11y(el) {
+    for (let n = el; n && n.nodeType === 1; n = n.parentElement || (n.getRootNode() && n.getRootNode().host) || null) {
+      if (n.getAttribute('aria-hidden') === 'true' || n.hasAttribute('inert')) return true;
+      if (getComputedStyle(n).display === 'none') return true;
+    }
+    const v = getComputedStyle(el).visibility;
+    return v === 'hidden' || v === 'collapse';
   }
 
   function resolveParts(parts) {
@@ -755,6 +1071,25 @@
     return cs.visibility !== 'hidden' && cs.display !== 'none';
   }
 
+  function deepElementFromPoint(x, y) {
+    let h = document.elementFromPoint(x, y);
+    while (h && h.shadowRoot) {
+      const inner = h.shadowRoot.elementFromPoint(x, y);
+      if (!inner || inner === h) break;
+      h = inner;
+    }
+    return h;
+  }
+  // el contains node, also across shadow boundaries
+  function composedContains(el, node) {
+    for (let n = node; n; n = n.parentNode || n.host) if (n === el) return true;
+    return false;
+  }
+  function describeEl(n) {
+    const cls = n.classList && n.classList.length ? '.' + Array.from(n.classList).slice(0, 2).join('.') : '';
+    return `<${n.tagName.toLowerCase()}${n.id ? '#' + n.id : ''}${cls}>`;
+  }
+
   function flash(el) {
     highlight(el);
     setTimeout(() => { if (!armed) clearHL(); }, 600);
@@ -771,10 +1106,18 @@
     switch (c.op) {
       case 'locate': {
         try { el.scrollIntoView({ block: 'center', inline: 'center', behavior: 'instant' }); } catch (_) {}
-        const off = await getFrameOffset();
         const r = el.getBoundingClientRect();
+        const cx = r.left + r.width / 2, cy = r.top + r.height / 2;
+        // Like Playwright: the element must actually receive the click (not covered by a modal/overlay).
+        const hitEl = deepElementFromPoint(cx, cy);
+        const hit = !!hitEl && composedContains(el, hitEl);
+        const off = await getFrameOffset();
         flash(el);
-        return { ...base, visible: isVisibleEl(el), x: off.x + r.left + r.width / 2, y: off.y + r.top + r.height / 2 };
+        return {
+          ...base, visible: isVisibleEl(el), hit,
+          coveredBy: hit || !hitEl ? null : describeEl(hitEl),
+          x: off.x + cx, y: off.y + cy,
+        };
       }
       case 'focus':
         el.focus();

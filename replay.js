@@ -13,6 +13,7 @@ const Replay = (() => {
     Tab: { code: 'Tab', keyCode: 9 },
     Escape: { code: 'Escape', keyCode: 27 },
     Delete: { code: 'Delete', keyCode: 46 },
+    Space: { code: 'Space', keyCode: 32, text: ' ', key: ' ' },
   };
 
   let run = null; // { tabId, stopped, log, attached:Set }
@@ -78,20 +79,27 @@ const Replay = (() => {
       last = await inFrames(tabId, cmd).catch(() => null);
       if (!last) {
         await chrome.scripting.executeScript({ target: { tabId, allFrames: true }, files: ['content.js'] }).catch(() => {});
-      } else if (last.found && (!needVisible || last.visible)) {
+      } else if (last.found && (!needVisible || last.visible) && (op !== 'locate' || last.hit !== false)) {
         if (last.error) throw new Error(last.error);
         return last;
       }
       await sleep(250);
     }
-    const why = last && last.found ? 'not visible' : 'not found';
+    const why = !last || !last.found ? 'not found'
+      : !last.visible ? 'not visible'
+      : last.hit === false ? `covered by another element ${last.coveredBy || ''} (e.g. a dialog/overlay)` : 'not ready';
     throw new Error(`Element ${why}: ${describe(parts)}`);
   }
 
-  async function click(tabId, x, y) {
-    const base = { x, y, button: 'left', clickCount: 1 };
-    await cdp(tabId, 'Input.dispatchMouseEvent', { type: 'mouseMoved', x, y });
-    await cdp(tabId, 'Input.dispatchMouseEvent', { ...base, type: 'mousePressed', buttons: 1 });
+  // CDP modifier bits: Alt=1, Ctrl=2, Meta=4, Shift=8
+  const MOD_BITS = { Alt: 1, Control: 2, ControlOrMeta: 2, Meta: 4, Shift: 8 };
+
+  async function click(tabId, x, y, step = {}) {
+    const modifiers = (step.modifiers || []).reduce((m, k) => m | (MOD_BITS[k] || 0), 0);
+    const button = step.button === 'middle' ? 'middle' : 'left';
+    const base = { x, y, button, clickCount: 1, modifiers };
+    await cdp(tabId, 'Input.dispatchMouseEvent', { type: 'mouseMoved', x, y, modifiers });
+    await cdp(tabId, 'Input.dispatchMouseEvent', { ...base, type: 'mousePressed', buttons: button === 'middle' ? 4 : 1 });
     await cdp(tabId, 'Input.dispatchMouseEvent', { ...base, type: 'mouseReleased', buttons: 0 });
   }
 
@@ -99,19 +107,24 @@ const Replay = (() => {
     const shift = combo.startsWith('Shift+');
     const key = shift ? combo.slice(6) : combo;
     const k = KEYS[key] || { code: key, keyCode: 0 };
-    const common = { key, code: k.code, windowsVirtualKeyCode: k.keyCode, nativeVirtualKeyCode: k.keyCode, modifiers: shift ? 8 : 0 };
+    const common = { key: k.key || key, code: k.code, windowsVirtualKeyCode: k.keyCode, nativeVirtualKeyCode: k.keyCode, modifiers: shift ? 8 : 0 };
     await cdp(tabId, 'Input.dispatchKeyEvent', { ...common, type: k.text ? 'keyDown' : 'rawKeyDown', text: k.text, unmodifiedText: k.text });
     await cdp(tabId, 'Input.dispatchKeyEvent', { ...common, type: 'keyUp' });
   }
 
+  // New tab or popup window opened by openerTabId (links, window.open, Ctrl+click, ...).
   function waitForPopup(openerTabId, timeout = 10000) {
     return new Promise((resolve, reject) => {
-      const onCreated = (tab) => {
-        if (tab.openerTabId !== openerTabId) return;
-        cleanup(); resolve(tab);
+      const done = (id) => { cleanup(); resolve({ id }); };
+      const onNav = (d) => { if (d.sourceTabId === openerTabId) done(d.tabId); };
+      const onCreated = (tab) => { if (tab.openerTabId === openerTabId) done(tab.id); };
+      const timer = setTimeout(() => { cleanup(); reject(new Error('The new tab / popup window did not open')); }, timeout);
+      const cleanup = () => {
+        clearTimeout(timer);
+        chrome.webNavigation.onCreatedNavigationTarget.removeListener(onNav);
+        chrome.tabs.onCreated.removeListener(onCreated);
       };
-      const timer = setTimeout(() => { cleanup(); reject(new Error('Popup did not open')); }, timeout);
-      const cleanup = () => { clearTimeout(timer); chrome.tabs.onCreated.removeListener(onCreated); };
+      chrome.webNavigation.onCreatedNavigationTarget.addListener(onNav);
       chrome.tabs.onCreated.addListener(onCreated);
     });
   }
@@ -128,8 +141,46 @@ const Replay = (() => {
     throw new Error(`${label} failed (got ${JSON.stringify(st && (step.verb === 'assert_checked' ? st.checked : step.verb === 'assert_value' ? st.value : st.text))})`);
   }
 
+  // Tab of the page this step belongs to ("page", "page1", ...); brings it to the front.
+  async function tabFor(step) {
+    const alias = step.page || run.cur;
+    const id = run.tabs[alias];
+    if (id == null) throw new Error(`Page "${alias}" is not open (was it closed?)`);
+    if (run.active !== id) {
+      await chrome.tabs.update(id, { active: true }).catch(() => {});
+      const t = await chrome.tabs.get(id).catch(() => null);
+      if (!t) throw new Error(`Page "${alias}" was closed`);
+      await chrome.windows.update(t.windowId, { focused: true }).catch(() => {});
+      run.active = id;
+      await sleep(200);
+    }
+    await attach(id);
+    return id;
+  }
+
+  // Runs one step; if it opens a new tab / popup window, registers it under its alias.
   async function execStep(step) {
-    let tabId = run.tabId;
+    if (step.verb === 'new_page') {
+      const root = await chrome.tabs.get(run.tabs.page);
+      const t = await chrome.tabs.create({ windowId: root.windowId, url: 'about:blank', active: true });
+      run.tabs[step.page] = t.id;
+      run.active = t.id;
+      return;
+    }
+    const tabId = await tabFor(step);
+    if (!step.opensPopup) return execAction(step, tabId);
+    const popupP = waitForPopup(tabId);
+    popupP.catch(() => {});
+    await execAction(step, tabId);
+    const popup = await popupP;
+    const alias = step.popupAlias || `page${Object.keys(run.tabs).length}`;
+    run.tabs[alias] = popup.id;
+    if (!step.page) run.cur = alias; // recordings from older versions: continue in the popup
+    await waitLoad(popup.id);
+    await attach(popup.id);
+  }
+
+  async function execAction(step, tabId) {
     switch (step.verb) {
       case 'goto': {
         const t = await chrome.tabs.get(tabId);
@@ -141,15 +192,7 @@ const Replay = (() => {
       }
       case 'click': {
         const r = await locate(tabId, step, 'locate');
-        if (step.opensPopup) {
-          const popupP = waitForPopup(tabId);
-          await click(tabId, r.x, r.y);
-          const popup = await popupP;
-          run.tabId = popup.id;
-          await attach(popup.id);
-          return waitLoad(popup.id);
-        }
-        return click(tabId, r.x, r.y);
+        return click(tabId, r.x, r.y, step);
       }
       case 'fill':
       case 'fill_rich': {
@@ -197,7 +240,7 @@ const Replay = (() => {
   async function start(steps, tabId, onReport, defaultSel) {
     if (run) throw new Error('Replay already running');
     report = onReport || (() => {});
-    run = { tabId, sel: defaultSel, stopped: false, log: [], attached: new Set() };
+    run = { tabs: { page: tabId }, cur: 'page', active: tabId, sel: defaultSel, stopped: false, log: [], attached: new Set() };
     const todo = steps.filter((s) => s.verb && s.verb !== 'pick');
     const total = todo.length;
     const send = (status, extra = {}) => report({ status, total, log: run.log, ...extra });
@@ -218,7 +261,7 @@ const Replay = (() => {
           break;
         }
         await sleep(STEP_DELAY);
-        await waitLoad(run.tabId).catch(() => {});
+        await waitLoad(run.active).catch(() => {});
       }
     } catch (e) {
       status = 'failed';
@@ -235,10 +278,11 @@ const Replay = (() => {
   function isRunning() { return !!run; }
 
   // User closed the "debugging this browser" bar, or the tab went away.
-  chrome.debugger.onDetach.addListener((source) => {
+  chrome.debugger.onDetach.addListener((source, reason) => {
     if (run && run.attached.has(source.tabId)) {
       run.attached.delete(source.tabId);
-      run.stopped = true;
+      // A popup that closes itself (e.g. "Sign in with Google") is fine; only the user's Cancel stops.
+      if (reason === 'canceled_by_user') run.stopped = true;
     }
   });
 

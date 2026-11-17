@@ -226,7 +226,7 @@
       return { parts: [...frames, ...scope, p], tier: 2 };
     };
     // CSS anchored on an id / test id ("#result", "[data-qa=…]") is stable → tier 2
-    const byCss = () => (css && css.value) ? { parts: [...frames, { k: 'locator', v: css.value }], tier: /^[#[]/.test(css.value) ? 2 : 3 } : null;
+    const byCss = () => (css && css.value) ? { parts: [...frames, { k: 'locator', v: css.value }], tier: (!/:nth-of-type|>|\s/.test(css.value) && /[#[.]/.test(css.value)) ? 2 : 3 } : null;
     const byXpath = () => (xpath && xpath.value)
       ? { parts: [...frames, { k: 'locator', v: xpathSelectorString(xpath.value) }], tier: strategy === 'xpath' ? 1 : 3 }
       : null;
@@ -251,10 +251,14 @@
 
     // Structural CSS/XPath (e.g. "body > ul > li:nth-of-type(2)") is brittle: only use it when the
     // user picked that strategy, or when it is anchored on an id / test id.
-    const stableCss = css && css.value && /^[#[]/.test(css.value);
+    // stable = one segment built on an id, attribute or meaningful class ("div.ContentEditable__root"),
+    // not a positional path ("main > div:nth-of-type(2) > span")
+    const stableCss = !!(css && css.value && !/:nth-of-type|>|\s/.test(css.value) && /[#[.]/.test(css.value));
     const structural = (fn) => (fn === byCss && strategy !== 'css' && !stableCss) || (fn === byXpath && strategy !== 'xpath');
     // An "Assert text" locator must not be built from the text it asserts.
-    const usable = (fn) => !(step.verb === 'assert_text' && fn === byText);
+    // Fields you type into must not be located by their (changing) text either.
+    const TEXT_UNSAFE = new Set(['assert_text', 'fill', 'fill_rich', 'press']);
+    const usable = (fn) => !(TEXT_UNSAFE.has(step.verb) && fn === byText);
 
     // 1) first candidate that matches exactly one element (loose, then exact=True)
     let nthFallback = null;
@@ -328,13 +332,19 @@
   // Multi-language "Code Snap"
   // =====================================================================
   const LANGS = {
-    'python-pytest': { family: 'py', file: 'test_example.py', label: 'Python · Pytest', indent: 4, root: 'page', aw: '' },
-    'python':        { family: 'py', file: 'example.py', label: 'Python · Library', indent: 4, root: 'page', aw: '' },
-    'python-async':  { family: 'py', file: 'example_async.py', label: 'Python · Async', indent: 4, root: 'page', aw: 'await ' },
-    'playwright-test': { family: 'js', file: 'example.spec.ts', label: 'Playwright Test (TS/JS)', indent: 2, root: 'page' },
-    'java':          { family: 'java', file: 'Example.java', label: 'Java', indent: 6, root: 'page' },
-    'csharp':        { family: 'cs', file: 'Tests.cs', label: 'C# · NUnit', indent: 8, root: 'Page' },
+    'python-pytest':      { family: 'py',   file: 'test_example.py',     label: 'Playwright · Python Pytest', indent: 4, root: 'page', aw: '' },
+    'python':             { family: 'py',   file: 'example.py',          label: 'Playwright · Python Library', indent: 4, root: 'page', aw: '' },
+    'python-async':       { family: 'py',   file: 'example_async.py',    label: 'Playwright · Python Async', indent: 4, root: 'page', aw: 'await ' },
+    'playwright-test-ts': { family: 'js',   file: 'example.spec.ts',     label: 'Playwright Test · TypeScript', indent: 2, root: 'page' },
+    'playwright-test-js': { family: 'js',   file: 'example.spec.js',     label: 'Playwright Test · JavaScript', indent: 2, root: 'page' },
+    'javascript':         { family: 'js',   file: 'example.js',          label: 'Playwright · JavaScript Library', indent: 2, root: 'page' },
+    'java-junit':         { family: 'java', file: 'TestExample.java',    label: 'Playwright · Java JUnit 5', indent: 4, root: 'page' },
+    'java':               { family: 'java', file: 'Example.java',        label: 'Playwright · Java Library', indent: 6, root: 'page' },
+    'csharp':             { family: 'cs',   file: 'Tests.cs',            label: 'Playwright · C# NUnit', indent: 8, root: 'Page' },
+    'selenium-python':    { family: 'sepy', file: 'test_selenium.py',    label: 'Selenium · Python', indent: 4, root: 'page' },
+    'selenium-java':      { family: 'sejava', file: 'SeleniumTest.java', label: 'Selenium · Java JUnit 5', indent: 4, root: 'page' },
   };
+  const LANG_ALIASES = { 'playwright-test': 'playwright-test-ts' }; // settings saved by older versions
 
   function valueList(lang, v) {
     const arr = Array.isArray(v) ? v : null;
@@ -380,23 +390,66 @@
           : call(`expect(${L}).not_to_be_checked()`, `expect(${L}).not.toBeChecked()`, `assertThat(${L}).not().isChecked()`, `Expect(${L}).Not.ToBeCheckedAsync()`);
       case 'assert_visible':
         return call(`expect(${L}).to_be_visible()`, `expect(${L}).toBeVisible()`, `assertThat(${L}).isVisible()`, `Expect(${L}).ToBeVisibleAsync()`);
-      case 'click': default:
-        return call(`${L}.click()`, `${L}.click()`, `${L}.click()`, `${L}.ClickAsync()`);
+      case 'click': default: {
+        // modifiers (Ctrl/Cmd, Shift, Alt) and middle button — e.g. "open in new tab"
+        const mods = step.modifiers || [];
+        const mid = step.button === 'middle';
+        if (!mods.length && !mid) return call(`${L}.click()`, `${L}.click()`, `${L}.click()`, `${L}.ClickAsync()`);
+        const up = (m) => m.toUpperCase();
+        const py = [mid ? 'button="middle"' : '', mods.length ? `modifiers=[${mods.map(pyStr).join(', ')}]` : ''].filter(Boolean).join(', ');
+        const js = [mid ? "button: 'middle'" : '', mods.length ? `modifiers: [${mods.map(jsStr).join(', ')}]` : ''].filter(Boolean).join(', ');
+        const java = `new Locator.ClickOptions()${mid ? '.setButton(MouseButton.MIDDLE)' : ''}${mods.length ? `.setModifiers(Arrays.asList(${mods.map((m) => `KeyboardModifier.${up(m)}`).join(', ')}))` : ''}`;
+        const cs = [mid ? 'Button = MouseButton.Middle' : '', mods.length ? `Modifiers = new[] { ${mods.map((m) => `KeyboardModifier.${m}`).join(', ')} }` : ''].filter(Boolean).join(', ');
+        return call(`${L}.click(${py})`, `${L}.click({ ${js} })`, `${L}.click(${java})`, `${L}.ClickAsync(new() { ${cs} })`);
+      }
     }
   }
 
-  function popupLines(cfg, P, NEW, stmt, pad) {
+  // New tab / popup window opened by `stmt`; waits until it has fully loaded.
+  // byContext: tabs opened with Ctrl/Shift/middle click have no opener, so Playwright's
+  // "popup" event doesn't fire — wait for the context's "page" event instead.
+  function popupLines(cfg, P, NEW, stmt, pad, byContext) {
     const one = ' '.repeat(cfg.family === 'py' ? 4 : cfg.indent > 4 ? 4 : 2);
     switch (cfg.family) {
-      case 'py':
-        if (cfg.aw) return [`${pad}async with ${P}.expect_popup() as popup_info:`, `${pad}${one}${stmt}`, `${pad}${NEW} = await popup_info.value`];
-        return [`${pad}with ${P}.expect_popup() as popup_info:`, `${pad}${one}${stmt}`, `${pad}${NEW} = popup_info.value`];
-      case 'js':
-        return [`${pad}const ${NEW}Promise = ${P}.waitForEvent('popup');`, `${pad}${stmt}`, `${pad}const ${NEW} = await ${NEW}Promise;`];
-      case 'java':
-        return [`${pad}Page ${NEW} = ${P}.waitForPopup(() -> {`, `${pad}  ${stmt}`, `${pad}});`];
-      default:
-        return [`${pad}var ${NEW} = await ${P}.RunAndWaitForPopupAsync(async () =>`, `${pad}{`, `${pad}    ${stmt}`, `${pad}});`];
+      case 'py': {
+        const waiter = byContext ? `${P}.context.expect_page()` : `${P}.expect_popup()`;
+        if (cfg.aw) return [`${pad}async with ${waiter} as ${NEW}_info:`, `${pad}${one}${stmt}`, `${pad}${NEW} = await ${NEW}_info.value`, `${pad}await ${NEW}.wait_for_load_state()`];
+        return [`${pad}with ${waiter} as ${NEW}_info:`, `${pad}${one}${stmt}`, `${pad}${NEW} = ${NEW}_info.value`, `${pad}${NEW}.wait_for_load_state()`];
+      }
+      case 'js': {
+        const waiter = byContext ? `${P}.context().waitForEvent('page')` : `${P}.waitForEvent('popup')`;
+        return [`${pad}const ${NEW}Promise = ${waiter};`, `${pad}${stmt}`, `${pad}const ${NEW} = await ${NEW}Promise;`, `${pad}await ${NEW}.waitForLoadState();`];
+      }
+      case 'java': {
+        const waiter = byContext ? `${P}.context().waitForPage` : `${P}.waitForPopup`;
+        return [`${pad}Page ${NEW} = ${waiter}(() -> {`, `${pad}  ${stmt}`, `${pad}});`, `${pad}${NEW}.waitForLoadState();`];
+      }
+      default: {
+        const waiter = byContext ? `${P}.Context.RunAndWaitForPageAsync` : `${P}.RunAndWaitForPopupAsync`;
+        return [`${pad}var ${NEW} = await ${waiter}(async () =>`, `${pad}{`, `${pad}    ${stmt}`, `${pad}});`, `${pad}await ${NEW}.WaitForLoadStateAsync();`];
+      }
+    }
+  }
+
+  // A tab the user switched to that wasn't opened by a recorded page.
+  function newPageLine(cfg, root, NEW) {
+    switch (cfg.family) {
+      case 'py': return cfg.aw ? `${NEW} = await ${root}.context.new_page()` : `${NEW} = ${root}.context.new_page()`;
+      case 'js': return `const ${NEW} = await ${root}.context().newPage();`;
+      case 'java': return `Page ${NEW} = ${root}.context().newPage();`;
+      default: return `var ${NEW} = await ${root}.Context.NewPageAsync();`;
+    }
+  }
+
+  // Switching back to another tab (e.g. after a "Sign in with Google" popup closed itself):
+  // bring it to the front first — focus-sensitive apps (rich-text editors, keyboard shortcuts)
+  // ignore input while their tab is in the background.
+  function bringToFrontLine(cfg, P) {
+    switch (cfg.family) {
+      case 'py': return `${cfg.aw || ''}${P}.bring_to_front()`;
+      case 'js': return `await ${P}.bringToFront();`;
+      case 'java': return `${P}.bringToFront();`;
+      default: return `await ${P}.BringToFrontAsync();`;
     }
   }
 
@@ -405,9 +458,14 @@
   function bodyLines(steps, opts, cfg) {
     const pad = ' '.repeat(cfg.indent);
     const out = [];
-    let P = cfg.root, popups = 0;
+    const pageVar = (alias) => (!alias || alias === 'page' ? cfg.root : alias);
+    let legacyP = cfg.root, legacyPopups = 0; // steps recorded by versions without page aliases
+    let front = cfg.root; // the page currently in front
     for (const step of steps) {
       if (!step.verb || step.isDetect || SNAP_SKIP.has(step.verb)) continue;
+      const P = step.page ? pageVar(step.page) : legacyP;
+      if (step.verb === 'new_page') { out.push(pad + newPageLine(cfg, cfg.root, pageVar(step.page))); front = pageVar(step.page); continue; }
+      if (P !== front) { out.push(pad + bringToFrontLine(cfg, P)); front = P; }
       const loc = step.verb === 'goto' ? null : locParts(step, opts.sel || step.selStrategy);
       const L = loc ? renderLoc(cfg.family, P, loc.parts) : null;
       const cm = cfg.family === 'py' ? '#' : '//';
@@ -418,10 +476,12 @@
       }
       const stmt = statement(cfg, step, L, P);
       if (step.opensPopup) {
-        popups++;
-        const NEW = `page${popups}`;
-        out.push(...popupLines(cfg, P, NEW, stmt, pad));
-        P = NEW;
+        const NEW = step.popupAlias || `page${++legacyPopups}`;
+        const byContext = !!((step.modifiers && step.modifiers.length) || step.button === 'middle');
+        out.push(...popupLines(cfg, P, NEW, stmt, pad, byContext));
+        if (!step.page) legacyP = NEW;
+        // a normal popup opens in front; a Ctrl/middle-click tab opens in the background
+        if (!byContext) front = NEW;
       } else {
         out.push(pad + stmt);
       }
@@ -472,13 +532,57 @@
           '', '',
           'asyncio.run(main())',
         ];
-      case 'playwright-test':
+      case 'playwright-test-ts':
         return [
           "import { test, expect } from '@playwright/test';",
           '',
           "test('test', async ({ page }) => {",
           ...body,
           '});',
+        ];
+      case 'playwright-test-js':
+        return [
+          '// @ts-check',
+          "const { test, expect } = require('@playwright/test');",
+          '',
+          "test('test', async ({ page }) => {",
+          ...body,
+          '});',
+        ];
+      case 'javascript':
+        return [
+          "const { chromium } = require('playwright');",
+          "const { expect } = require('@playwright/test');",
+          '',
+          '(async () => {',
+          '  const browser = await chromium.launch({ headless: false });',
+          '  const context = await browser.newContext();',
+          '  const page = await context.newPage();',
+          ...body,
+          '',
+          '  // ---------------------',
+          '  await context.close();',
+          '  await browser.close();',
+          '})();',
+        ];
+      case 'java-junit':
+        return [
+          'import com.microsoft.playwright.junit.UsePlaywright;',
+          'import com.microsoft.playwright.*;',
+          'import com.microsoft.playwright.options.*;',
+          'import org.junit.jupiter.api.*;',
+          '',
+          'import java.util.*;',
+          '',
+          'import static com.microsoft.playwright.assertions.PlaywrightAssertions.*;',
+          '',
+          '@UsePlaywright',
+          'public class TestExample {',
+          '  @Test',
+          '  void test(Page page) {',
+          ...body,
+          '  }',
+          '}',
         ];
       case 'java':
         return [
@@ -529,6 +633,306 @@
     }
   }
 
+  // =====================================================================
+  // Selenium (Python + Java/JUnit 5)
+  // =====================================================================
+  const SE_ORDER = ['id', 'test_id', 'name', 'role', 'label', 'placeholder', 'text', 'alt_text', 'title', 'css', 'xpath'];
+  const PY_BY = { id: 'By.ID', name: 'By.NAME', css: 'By.CSS_SELECTOR', xpath: 'By.XPATH' };
+  const JAVA_BY = { id: 'By.id', name: 'By.name', css: 'By.cssSelector', xpath: 'By.xpath' };
+  const SE_KEYS = {
+    sepy: { Enter: 'Keys.ENTER', Tab: 'Keys.TAB', 'Shift+Tab': 'Keys.SHIFT + Keys.TAB', Escape: 'Keys.ESCAPE', Space: 'Keys.SPACE' },
+    sejava: { Enter: 'Keys.ENTER', Tab: 'Keys.TAB', 'Shift+Tab': 'Keys.chord(Keys.SHIFT, Keys.TAB)', Escape: 'Keys.ESCAPE', Space: 'Keys.SPACE' },
+  };
+
+  // Selenium locator: first candidate (selected strategy first) that matched exactly one
+  // element while recording; otherwise the first that contains the element, with an index.
+  function seLocator(step, strategy) {
+    const S = (step.selector && step.selector.selenium) || null;
+    const c = (S && S.cands) || {};
+    const order = [strategy, ...SE_ORDER.filter((k) => k !== strategy)];
+    for (const k of order) { const x = c[k]; if (x && x.n === 1 && x.i === 0) return { ...x, index: 0, used: k }; }
+    for (const k of order) { const x = c[k]; if (x && x.i >= 0) return { ...x, index: x.i, used: k }; }
+    const sel = step.selector || {};
+    if (sel.css && sel.css.value) return { by: 'css', v: sel.css.value, index: 0, used: 'css' };
+    if (sel.xpath && sel.xpath.value) return { by: 'xpath', v: sel.xpath.value, index: 0, used: 'xpath' };
+    return { by: 'css', v: 'body', index: 0, used: 'css' };
+  }
+
+  function seEl(f, step, loc) {
+    const frames = step.framePath || [];
+    const shadow = (step.selector && step.selector.selenium && step.selector.selenium.shadow) || [];
+    if (f === 'sepy') {
+      let s = `el(${PY_BY[loc.by]}, ${pyStr(loc.v)}`;
+      if (loc.index) s += `, index=${loc.index}`;
+      if (frames.length) s += `, frames=[${frames.map(pyStr).join(', ')}]`;
+      if (shadow.length) s += `, shadow=[${shadow.map(pyStr).join(', ')}]`;
+      return s + ')';
+    }
+    const by = `${JAVA_BY[loc.by]}(${dqStr(loc.v)})`;
+    if (!loc.index && !frames.length && !shadow.length) return `el(${by})`;
+    const arr = (a) => (a.length ? `new String[] {${a.map(dqStr).join(', ')}}` : 'new String[0]');
+    return `el(${by}, ${loc.index || 0}, ${arr(frames)}, ${arr(shadow)})`;
+  }
+
+  function seStatements(f, step, E) {
+    const py = f === 'sepy';
+    const q = py ? pyStr : dqStr;
+    const end = py ? '' : ';';
+    const v = step.value;
+    const key = (k) => SE_KEYS[f][k] || q(k);
+    switch (step.verb) {
+      case 'goto': return [`driver.get(${q(step.url)})${end}`];
+      case 'fill': case 'fill_rich': return [py ? `type_into(${E}, ${q(v)})` : `typeInto(${E}, ${q(v)});`];
+      case 'check': return [py ? `set_checked(${E}, True)` : `setChecked(${E}, true);`];
+      case 'uncheck': return [py ? `set_checked(${E}, False)` : `setChecked(${E}, false);`];
+      case 'select': {
+        const vals = Array.isArray(v) ? v : [v];
+        return vals.map((x) => (py ? `Select(${E}).select_by_value(${q(x)})` : `new Select(${E}).selectByValue(${q(x)});`));
+      }
+      case 'press': return [`${E}.${py ? 'send_keys' : 'sendKeys'}(${key(v)})${end}`];
+      case 'assert_text': return [py ? `wait.until(lambda d: ${q(v)} in ${E}.text)` : `wait.until(d -> ${E}.getText().contains(${q(v)}));`];
+      case 'assert_value': return [py ? `wait.until(lambda d: ${E}.get_property("value") == ${q(v)})` : `wait.until(d -> ${q(v)}.equals(${E}.getDomProperty("value")));`];
+      case 'assert_checked': return [py ? `wait.until(lambda d: ${E}.is_selected() == ${v ? 'True' : 'False'})` : `wait.until(d -> ${E}.isSelected() == ${v ? 'true' : 'false'});`];
+      case 'assert_visible': return [py ? `assert ${E}.is_displayed()` : `assertTrue(${E}.isDisplayed());`];
+      case 'click': default: {
+        // Ctrl/Shift(+middle) click = open in new tab / window: hold the key while clicking
+        const mods = (step.modifiers || []).slice();
+        if (step.button === 'middle' && !mods.length) mods.push('ControlOrMeta');
+        if (!mods.length) return [`${E}.click()${end}`];
+        // MOD = Cmd on macOS, Ctrl elsewhere (defined at the top of the generated file)
+        const K = { ControlOrMeta: 'MOD', Shift: 'Keys.SHIFT', Alt: 'Keys.ALT' };
+        const keys = mods.map((m) => K[m] || 'MOD');
+        if (py) return [`ActionChains(driver)${keys.map((k) => `.key_down(${k})`).join('')}.click(${E})${keys.map((k) => `.key_up(${k})`).join('')}.perform()`];
+        return [`new Actions(driver)${keys.map((k) => `.keyDown(${k})`).join('')}.click(${E})${keys.map((k) => `.keyUp(${k})`).join('')}.perform();`];
+      }
+    }
+  }
+
+  function seleniumBody(steps, opts, cfg) {
+    const f = cfg.family, py = f === 'sepy';
+    const pad = ' '.repeat(cfg.indent);
+    const cm = py ? '#' : '//';
+    const out = [];
+    let cur = 'page';
+    const switchTo = (alias) => {
+      if (!alias || alias === cur) return;
+      out.push(pad + (py ? `driver.switch_to.window(windows[${pyStr(alias)}])` : `driver.switchTo().window(windows.get(${dqStr(alias)}));`));
+      cur = alias;
+    };
+    for (const step of steps) {
+      if (!step.verb || step.isDetect || SNAP_SKIP.has(step.verb)) continue;
+      if (step.verb === 'new_page') {
+        out.push(pad + (py ? 'driver.switch_to.new_window("tab")' : 'driver.switchTo().newWindow(WindowType.TAB);'));
+        out.push(pad + (py ? `windows[${pyStr(step.page)}] = driver.current_window_handle` : `windows.put(${dqStr(step.page)}, driver.getWindowHandle());`));
+        cur = step.page;
+        continue;
+      }
+      switchTo(step.page);
+      let E = null;
+      if (step.verb !== 'goto') {
+        const loc = seLocator(step, opts.sel || step.selStrategy);
+        if (opts.sel && loc.used !== opts.sel && opts.comments !== false) {
+          out.push(`${pad}${cm} "${opts.sel}" is not available/unique for this element in Selenium → used ${loc.used}`);
+        }
+        E = seEl(f, step, loc);
+      }
+      const lines = seStatements(f, step, E);
+      if (step.opensPopup && step.popupAlias) {
+        const before = py ? 'before' : `before${step.popupAlias[0].toUpperCase()}${step.popupAlias.slice(1)}`;
+        out.push(pad + (py ? 'before = driver.window_handles' : `Set<String> ${before} = driver.getWindowHandles();`));
+        lines.forEach((l) => out.push(pad + l));
+        out.push(pad + (py ? `windows[${pyStr(step.popupAlias)}] = new_window(before)` : `windows.put(${dqStr(step.popupAlias)}, newWindow(${before}));`));
+        cur = step.popupAlias;
+      } else {
+        lines.forEach((l) => out.push(pad + l));
+      }
+    }
+    return out;
+  }
+
+  function seleniumWrap(lang, body) {
+    if (lang === 'selenium-java') {
+      return [
+        'import org.junit.jupiter.api.*;',
+        'import org.openqa.selenium.*;',
+        'import org.openqa.selenium.chrome.ChromeDriver;',
+        'import org.openqa.selenium.interactions.Actions;',
+        'import org.openqa.selenium.support.ui.Select;',
+        'import org.openqa.selenium.support.ui.WebDriverWait;',
+        '',
+        'import java.time.Duration;',
+        'import java.util.*;',
+        '',
+        'import static org.junit.jupiter.api.Assertions.*;',
+        '',
+        'public class SeleniumTest {',
+        '  /** Cmd on macOS, Ctrl on Windows / Linux (for "open in new tab" clicks). */',
+        '  static final Keys MOD = System.getProperty("os.name").toLowerCase().contains("mac") ? Keys.COMMAND : Keys.CONTROL;',
+        '',
+        '  WebDriver driver;',
+        '  WebDriverWait wait;',
+        '  Map<String, String> windows = new HashMap<>();',
+        '',
+        '  @BeforeEach',
+        '  void setUp() {',
+        '    driver = new ChromeDriver();',
+        '    wait = new WebDriverWait(driver, Duration.ofSeconds(10));',
+        '    // pages re-render and iframes reload while we wait: retry instead of failing',
+        '    wait.ignoreAll(List.of(StaleElementReferenceException.class, NoSuchFrameException.class,',
+        '        NoSuchShadowRootException.class, org.openqa.selenium.NoSuchElementException.class));',
+        '    windows.put("page", driver.getWindowHandle());',
+        '  }',
+        '',
+        '  @AfterEach',
+        '  void tearDown() {',
+        '    if (driver != null) {',
+        '      driver.quit();',
+        '    }',
+        '  }',
+        '',
+        '  /** CSS search that also looks inside open shadow roots (for iframes inside web components). */',
+        '  static final String DEEP_CSS = "const out = [], walk = (r) => { r.querySelectorAll(arguments[0]).forEach((e) => out.push(e)); "',
+        '      + "r.querySelectorAll(\'*\').forEach((e) => e.shadowRoot && walk(e.shadowRoot)); }; walk(document); return out;";',
+        '',
+        '  /** Returns the element once visible; enters the iframe chain and open shadow roots first. */',
+        '  @SuppressWarnings("unchecked")',
+        '  WebElement el(By by, int index, String[] frames, String[] shadow) {',
+        '    return wait.until(d -> {',
+        '      d.switchTo().defaultContent();',
+        '      for (String frame : frames) {',
+        '        String[] p = frame.split(" >> nth=");',
+        '        int n = p.length > 1 ? Integer.parseInt(p[1]) : 0;',
+        '        List<WebElement> found = (List<WebElement>) ((JavascriptExecutor) d).executeScript(DEEP_CSS, p[0]);',
+        '        if (found.size() <= n) return null;',
+        '        d.switchTo().frame(found.get(n));',
+        '      }',
+        '      SearchContext root = d;',
+        '      List<WebElement> found;',
+        '      try {',
+        '        for (String host : shadow) root = root.findElement(By.cssSelector(host)).getShadowRoot();',
+        '        found = root.findElements(by);',
+        '      } catch (org.openqa.selenium.NoSuchElementException e) {',
+        '        found = List.of();',
+        '      }',
+        '      if (found.isEmpty() && shadow.length > 0 && by instanceof By.ByCssSelector) {',
+        '        // the shadow hosts changed: search every open shadow root for the element',
+        '        String css = by.toString().replaceFirst("^By\\\\.cssSelector: ", "");',
+        '        found = (List<WebElement>) ((JavascriptExecutor) d).executeScript(DEEP_CSS, css);',
+        '      }',
+        '      return found.size() > index && found.get(index).isDisplayed() ? found.get(index) : null;',
+        '    });',
+        '  }',
+        '',
+        '  WebElement el(By by) {',
+        '    return el(by, 0, new String[0], new String[0]);',
+        '  }',
+        '',
+        '  void typeInto(WebElement e, String text) {',
+        '    e.clear();',
+        '    e.sendKeys(text);',
+        '  }',
+        '',
+        '  void setChecked(WebElement e, boolean checked) {',
+        '    if (e.isSelected() != checked) e.click();',
+        '  }',
+        '',
+        '  /** Waits for a new tab / popup window, switches to it once loaded and returns its handle. */',
+        '  String newWindow(Set<String> before) {',
+        '    wait.until(d -> d.getWindowHandles().size() > before.size());',
+        '    String handle = driver.getWindowHandles().stream().filter(h -> !before.contains(h)).findFirst().get();',
+        '    driver.switchTo().window(handle);',
+        '    wait.until(d -> "complete".equals(((JavascriptExecutor) d).executeScript("return document.readyState")));',
+        '    return handle;',
+        '  }',
+        '',
+        '  @Test',
+        '  void test() {',
+        ...body,
+        '  }',
+        '}',
+      ];
+    }
+    return [
+      'import sys',
+      '',
+      'from selenium import webdriver',
+      'from selenium.common.exceptions import (NoSuchElementException, NoSuchFrameException,',
+      '                                        NoSuchShadowRootException, StaleElementReferenceException)',
+      'from selenium.webdriver.common.action_chains import ActionChains',
+      'from selenium.webdriver.common.by import By',
+      'from selenium.webdriver.common.keys import Keys',
+      'from selenium.webdriver.support.ui import Select, WebDriverWait',
+      '',
+      'driver = webdriver.Chrome()',
+      '# pages re-render and iframes reload while we wait: retry instead of failing',
+      'wait = WebDriverWait(driver, 10, ignored_exceptions=(NoSuchElementException, StaleElementReferenceException,',
+      '                                                     NoSuchFrameException, NoSuchShadowRootException))',
+      'windows = {"page": driver.current_window_handle}',
+      'MOD = Keys.COMMAND if sys.platform == "darwin" else Keys.CONTROL  # for "open in new tab" clicks',
+      '',
+      '# CSS search that also looks inside open shadow roots (for iframes inside web components)',
+      'DEEP_CSS = ("const out = [], walk = (r) => { r.querySelectorAll(arguments[0]).forEach((e) => out.push(e)); "',
+      '            "r.querySelectorAll(\'*\').forEach((e) => e.shadowRoot && walk(e.shadowRoot)); }; walk(document); return out;")',
+      '',
+      '',
+      'def el(by, value, index=0, frames=(), shadow=()):',
+      '    """Return the element once visible; enters the iframe chain and open shadow roots first."""',
+      '    def find(d):',
+      '        d.switch_to.default_content()',
+      '        for frame in frames:',
+      '            css, _, nth = frame.partition(" >> nth=")',
+      '            found = d.execute_script(DEEP_CSS, css)',
+      '            if len(found) <= int(nth or 0):',
+      '                return False',
+      '            d.switch_to.frame(found[int(nth or 0)])',
+      '        root = d',
+      '        try:',
+      '            for host in shadow:',
+      '                root = root.find_element(By.CSS_SELECTOR, host).shadow_root',
+      '            found = root.find_elements(by, value)',
+      '        except NoSuchElementException:',
+      '            found = []',
+      '        if not found and shadow and by == By.CSS_SELECTOR:',
+      '            found = d.execute_script(DEEP_CSS, value)  # shadow hosts changed: search all open shadow roots',
+      '        return found[index] if len(found) > index and found[index].is_displayed() else False',
+      '    return wait.until(find)',
+      '',
+      '',
+      'def type_into(element, text):',
+      '    element.clear()',
+      '    element.send_keys(text)',
+      '',
+      '',
+      'def set_checked(element, checked):',
+      '    if element.is_selected() != checked:',
+      '        element.click()',
+      '',
+      '',
+      'def new_window(before):',
+      '    """Wait for a new tab / popup window, switch to it once loaded and return its handle."""',
+      '    wait.until(lambda d: len(d.window_handles) > len(before))',
+      '    handle = [h for h in driver.window_handles if h not in before][0]',
+      '    driver.switch_to.window(handle)',
+      '    wait.until(lambda d: d.execute_script("return document.readyState") == "complete")',
+      '    return handle',
+      '',
+      '',
+      'def test_example():',
+      ...(body.length ? body : ['    pass']),
+      '',
+      '',
+      'def teardown_module():',
+      '    driver.quit()',
+      '',
+      '',
+      'if __name__ == "__main__":',
+      '    try:',
+      '        test_example()',
+      '    finally:',
+      '        driver.quit()',
+    ];
+  }
+
   // ---------- detect_state / is_visible / pick snaps (Python, BaseState style) ----------
   function buildSpecialSnaps(steps, opts) {
     const detectSteps = steps.filter((s) => s.verb === 'detect' || s.isDetect);
@@ -568,9 +972,13 @@
 
   function generatePlaywright(steps, opts) {
     opts = opts || {};
-    const lang = LANGS[opts.lang] ? opts.lang : 'python-pytest';
+    let lang = LANG_ALIASES[opts.lang] || opts.lang;
+    if (!LANGS[lang]) lang = 'python-pytest';
     const cfg = LANGS[lang];
-    const snap = wrap(lang, bodyLines(steps, opts, cfg)).join('\n');
+    const isSelenium = cfg.family === 'sepy' || cfg.family === 'sejava';
+    const snap = (isSelenium
+      ? seleniumWrap(lang, seleniumBody(steps, opts, cfg))
+      : wrap(lang, bodyLines(steps, opts, cfg))).join('\n');
 
     // Python locator list (kept for compatibility with older callers)
     const seen = new Set();
@@ -582,7 +990,7 @@
     const extras = buildSpecialSnaps(steps, opts);
     return {
       lang,
-      family: cfg.family,
+      family: cfg.family === 'sepy' ? 'py' : cfg.family === 'sejava' ? 'java' : cfg.family,
       fileName: cfg.file,
       locators: locators.join('\n') || '# no locators yet',
       code: snap,

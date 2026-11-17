@@ -9,17 +9,22 @@
 
 importScripts('codegen.js', 'replay.js');
 
-const ARM_MODES = ['pick', 'detect', 'is_visible', 'assert_visible', 'assert_text', 'assert_value'];
+const ARM_MODES = ['pick', 'detect', 'is_visible'];
 const MAX_HTML = 20000;
 
 let rec = { recording: false, paused: false };
 let steps = [];
 let settings = { testIdAttr: 'data-testid', sel: 'text', lang: 'python-pytest' };
+// Multi-page recording: every tab that takes part gets a page alias
+// ("page", "page1", "page2", ...) which the generated code uses as variable name.
+let pages = { aliases: {}, count: 0 };   // aliases: { [tabId]: alias }
+let pendingPopup = null;                 // a popup whose opening step hasn't arrived yet
 
 const ready = Promise.all([
-  chrome.storage.session.get(['rec', 'steps']).then((d) => {
+  chrome.storage.session.get(['rec', 'steps', 'pages']).then((d) => {
     if (d.rec) rec = d.rec;
     if (Array.isArray(d.steps)) steps = d.steps;
+    if (d.pages) pages = d.pages;
   }),
   chrome.storage.local.get(['settings']).then((d) => {
     if (d.settings) settings = { ...settings, ...d.settings };
@@ -86,8 +91,46 @@ async function startReplay() {
 }
 
 async function saveSteps() {
-  await chrome.storage.session.set({ steps });
+  if (!steps.length) { pages = { aliases: {}, count: 0 }; pendingPopup = null; }
+  await chrome.storage.session.set({ steps, pages });
   toPanel({ type: 'STEPS', steps });
+}
+
+function nextAlias() { pages.count += 1; return `page${pages.count}`; }
+
+// Which page alias does this tab have? Unknown tabs (the user switched to some other
+// tab while recording) become a new page: page.context.new_page() + goto(url).
+function aliasForTab(tab) {
+  if (!tab || tab.id == null) return 'page';
+  let alias = pages.aliases[tab.id];
+  if (alias) return alias;
+  if (!steps.length) {
+    alias = 'page';
+    pages.aliases[tab.id] = alias;
+    if (/^https?:/i.test(tab.url || '')) steps.push({ verb: 'goto', url: tab.url, page: alias, framePath: [], at: Date.now() });
+    return alias;
+  }
+  alias = nextAlias();
+  pages.aliases[tab.id] = alias;
+  steps.push({ verb: 'new_page', page: alias, framePath: [], at: Date.now() });
+  if (/^https?:/i.test(tab.url || '')) steps.push({ verb: 'goto', url: tab.url, page: alias, framePath: [], at: Date.now() });
+  return alias;
+}
+
+const POPUP_OPENERS = new Set(['click', 'press', 'check', 'uncheck', 'select', 'fill', 'fill_rich']);
+
+// Mark the step that opened a new tab / popup window.
+function attachPopup(srcAlias, alias, maxAgeMs) {
+  const now = Date.now();
+  for (let i = steps.length - 1; i >= 0; i--) {
+    const s = steps[i];
+    if (s.page !== srcAlias || !POPUP_OPENERS.has(s.verb)) continue;
+    if (now - (s.at || 0) > maxAgeMs || s.popupAlias) return false;
+    s.opensPopup = true;
+    s.popupAlias = alias;
+    return true;
+  }
+  return false;
 }
 
 async function setRec(next) {
@@ -107,9 +150,17 @@ function selectorKey(step) {
   return [step.tag || '', role.role || '', role.name || '', css, frame].join('|');
 }
 
-function addStep(action) {
-  const a = { ...action };
+function addStep(action, tab) {
+  const a = { ...action, at: Date.now() };
+  a.page = aliasForTab(tab);
   if (a.html && a.html.length > MAX_HTML) a.html = a.html.slice(0, MAX_HTML) + '\n<!-- truncated -->';
+  // The new tab was created before this step's message arrived: link them now.
+  if (pendingPopup && pendingPopup.srcAlias === a.page && POPUP_OPENERS.has(a.verb) && Date.now() - pendingPopup.at < 3000) {
+    a.opensPopup = true;
+    a.popupAlias = pendingPopup.alias;
+    clearTimeout(pendingPopup.timer);
+    pendingPopup = null;
+  }
   const last = steps[steps.length - 1];
   const isFill = a.verb === 'fill' || a.verb === 'fill_rich';
   // Real-time typing: keep updating the last fill step for the same field.
@@ -117,19 +168,49 @@ function addStep(action) {
     last.value = a.value;
     return;
   }
-  steps.push(a);
+  // Keep steps in the order the user did them (an iframe action can arrive a bit late).
+  let i = steps.length;
+  if (a.t) while (i > 0 && steps[i - 1].t && steps[i - 1].t > a.t) i--;
+  steps.splice(i, 0, a);
 }
 
 // ---------- commands ----------
 async function startRecording() {
   const tab = await activeTab();
   if (tab && tab.id != null) await ensureInjected(tab.id);
-  if (!steps.length && tab && /^https?:/i.test(tab.url || '')) {
-    steps.push({ verb: 'goto', url: tab.url, framePath: [] });
+  if (!steps.length && tab) {
+    pages = { aliases: {}, count: 0 };
+    aliasForTab(tab); // the starting tab is "page" (+ goto)
     await saveSteps();
   }
   await setRec({ recording: true, paused: false });
 }
+
+// ---------- new tabs & popup windows ----------
+// Fires for target=_blank links, window.open(), Ctrl/Shift/middle-click, form target=_blank,
+// "Sign in with Google" popup windows, ... in normal AND incognito windows.
+chrome.webNavigation.onCreatedNavigationTarget.addListener((d) => {
+  enqueue(async () => {
+    if (!rec.recording || replaying) return;
+    const srcAlias = pages.aliases[d.sourceTabId];
+    if (!srcAlias || pages.aliases[d.tabId]) return;
+    const alias = nextAlias();
+    pages.aliases[d.tabId] = alias;
+    if (attachPopup(srcAlias, alias, 2500)) { await saveSteps(); return; }
+    // The opening click hasn't been reported yet (messages race) — wait briefly for it.
+    const p = { srcAlias, alias, at: Date.now() };
+    p.timer = setTimeout(() => enqueue(async () => {
+      if (pendingPopup !== p) return;
+      pendingPopup = null;
+      // Opened without a recorded action (e.g. by a page script): open it explicitly.
+      steps.push({ verb: 'new_page', page: alias, framePath: [], at: Date.now() });
+      if (/^https?:/i.test(d.url || '')) steps.push({ verb: 'goto', url: d.url, page: alias, framePath: [], at: Date.now() });
+      await saveSteps();
+    }), 3000);
+    pendingPopup = p;
+    await chrome.storage.session.set({ pages });
+  });
+});
 
 async function handleCmd(cmd) {
   if (cmd === 'start') return startRecording();
@@ -164,7 +245,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     }
     if (msg.type === 'ACTION' && msg.action) {
       const action = { ...msg.action, frameId: sender.frameId, url: msg.action.url || sender.url };
-      enqueue(async () => { addStep(action); await saveSteps(); });
+      enqueue(async () => { addStep(action, sender.tab); await saveSteps(); });
       return;
     }
     if (msg.type === 'MODE_DONE' || msg.type === 'MODE_CANCELLED') {
@@ -197,9 +278,6 @@ const MENU = [
   ['pick', 'Pick locator (copy HTML)'],
   ['detect', 'Detect state'],
   ['is_visible', 'Is visible'],
-  ['assert_visible', 'Assert visible'],
-  ['assert_text', 'Assert text'],
-  ['assert_value', 'Assert value'],
 ];
 
 chrome.runtime.onInstalled.addListener(() => {

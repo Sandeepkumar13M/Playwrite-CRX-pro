@@ -6,161 +6,240 @@
 <title>Playwright CRX Pro</title>
 <style>
   :root{
-    --bg:#f5f5f7; --card:#ffffff; --ink:#1d1d1f; --mut:#86868b;
-    --line:#e8e8ed; --acc:#0a84ff; --acc-soft:#eaf3ff; --rec:#ff3b30;
-    --np-red:#ff3b30; --nth-black:#111111; --nth-gray:#f1f1f3;
-    --green:#34c759; --purple:#af52de; --radius:16px;
-    --sans:-apple-system,BlinkMacSystemFont,'SF Pro Display','Segoe UI',sans-serif;
-    --mono:'SF Mono',ui-monospace,'Cascadia Code',monospace;
+    --bg:#f3f5f9; --surface:#ffffff; --surface-2:#f7f8fb; --ink:#0f172a; --ink-2:#334155; --muted:#64748b;
+    --line:#e3e8ef; --line-2:#d5dce6;
+    --brand:#2ead33; --brand-ink:#ffffff; --brand-soft:#e8f7e9;
+    --rec:#ef4444; --rec-soft:#fdecec; --warn:#f59e0b; --blue:#2563eb; --blue-soft:#e8efff; --violet:#7c3aed; --violet-soft:#f1eafe;
+    --code-bg:#0d1117; --code-top:#161b22; --code-line:#21262d; --code-ink:#e6edf3; --code-mut:#8b949e;
+    --shadow:0 1px 2px rgba(15,23,42,.06),0 4px 14px rgba(15,23,42,.05);
+    --r:14px; --r-sm:10px;
+    --sans:"Inter",ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+    --mono:"JetBrains Mono","Cascadia Code",ui-monospace,"SF Mono",Consolas,monospace;
+  }
+  @media (prefers-color-scheme: dark){
+    :root{
+      --bg:#0b0f17; --surface:#121826; --surface-2:#0f1522; --ink:#e6eaf2; --ink-2:#c3cad8; --muted:#8a94a8;
+      --line:#1f2737; --line-2:#2a3447;
+      --brand-soft:#123118; --rec-soft:#3a1517; --blue-soft:#14223f; --violet-soft:#241a3d;
+      --code-bg:#0a0d14; --code-top:#111621; --code-line:#1c2230;
+      --shadow:0 1px 2px rgba(0,0,0,.4),0 6px 18px rgba(0,0,0,.25);
+    }
   }
   *{box-sizing:border-box;margin:0;padding:0}
-  body{font-family:var(--sans);background:var(--bg);color:var(--ink);
-    font-size:14px;height:100vh;display:flex;flex-direction:column;overflow:hidden;
-    -webkit-font-smoothing:antialiased}
-  .top{padding:18px 18px 14px;display:flex;align-items:center;gap:12px}
-  .logo{width:34px;height:34px;border-radius:10px;background:#0f172a;display:grid;place-items:center;flex-shrink:0;overflow:hidden}
+  html,body{height:100%}
+  body{font-family:var(--sans);background:var(--bg);color:var(--ink);font-size:13px;line-height:1.45;
+    display:flex;flex-direction:column;overflow:hidden;-webkit-font-smoothing:antialiased}
+  button{font-family:inherit;color:inherit}
+  svg{flex-shrink:0}
+
+  /* ---------- header ---------- */
+  .hdr{display:flex;align-items:center;gap:10px;padding:14px 14px 10px}
+  .logo{width:34px;height:34px;border-radius:10px;overflow:hidden;background:#0f172a;box-shadow:var(--shadow)}
   .logo img{width:100%;height:100%;object-fit:cover;display:block}
-  .title{font-size:17px;font-weight:600;letter-spacing:-.3px}
-  .status{margin-left:auto;font-size:12px;color:var(--mut);display:flex;align-items:center;gap:6px}
-  .pulse{width:8px;height:8px;border-radius:50%;background:var(--mut)}
-  .pulse.on{background:var(--rec);animation:beat 1.3s infinite}
-  @keyframes beat{0%,100%{opacity:1}50%{opacity:.35}}
-  .recwrap{padding:4px 18px 14px}
-  .rec-actions{display:flex;gap:8px}
-  .rec{flex:1;border:none;border-radius:12px;padding:12px 14px;font-size:14px;font-weight:700;font-family:var(--sans);color:#fff;background:var(--np-red);cursor:pointer;transition:transform .12s,background .2s;letter-spacing:-.1px}
-  .rec:active{transform:scale(.98)}
-  .rec.on{background:var(--ink)}
-  .pause-btn{flex:1;border:none;border-radius:12px;padding:12px 14px;font-size:12px;font-weight:700;font-family:var(--mono);letter-spacing:.35px;background:#64748b;color:#fff;cursor:pointer}
-  .pause-btn:disabled{opacity:.5;cursor:not-allowed}
-  .pause-btn.active{background:#0ea5e9}
-  .mini{display:flex;gap:8px;margin-top:8px}
-  .mini button{flex:1;border:none;border-radius:11px;padding:10px;font-size:11.5px;font-weight:700;font-family:var(--mono);text-transform:uppercase;letter-spacing:.45px;color:var(--ink);background:var(--card);cursor:pointer;transition:transform .12s;box-shadow:0 1px 2px rgba(0,0,0,.04)}
-  .mini button:active{transform:scale(.97)}
-  .mini button.armed{background:var(--acc);color:#fff}
-  #pick{background:#1f1f22;color:#fff}
-  #detect{background:#0a84ff;color:#fff}
-  #isVisible{background:#6e56cf;color:#fff}
-  #clear{background:var(--np-red);color:#fff}
-  .play-btn{flex:1;border:none;border-radius:12px;padding:12px 14px;font-size:13px;font-weight:700;font-family:var(--sans);background:#2ead33;color:#fff;cursor:pointer}
-  .play-btn.running{background:#111827}
-  .play-btn:active{transform:scale(.98)}
-  .replay-card{min-height:0}
-  .replay-log{list-style:none;margin:0;padding:8px 12px 10px;font-family:var(--mono);font-size:11.5px;line-height:1.7;color:#e2e8f0}
-  .replay-log li{display:flex;gap:8px;align-items:baseline}
-  .replay-log .ok{color:#4ade80}.replay-log .bad{color:#f87171}.replay-log .run{color:#fbbf24}.replay-log .wait{color:#64748b}
-  .replay-log .msg{color:#fca5a5;word-break:break-word;white-space:normal}
-  #assertVisible{background:#0369a1;color:#fff}
-  #assertText{background:#0f766e;color:#fff}
-  #assertValue{background:#15803d;color:#fff}
-  #undo{background:#e5e7eb;color:#111827}
-  .mini button.armed{background:var(--acc)!important;color:#fff!important;outline:2px solid #fff;outline-offset:-4px}
-  #pick:active,#detect:active,#isVisible:active,#clear:active,#assertText:active,#assertValue:active,#undo:active{filter:brightness(.95)}
-  .ver{white-space:nowrap;display:inline-block;font-size:10.5px;font-weight:700;color:#fff;background:var(--np-red);border-radius:6px;padding:2px 6px;margin-left:4px;vertical-align:2px;letter-spacing:.2px}
-  .hint{margin-top:8px;font-size:11px;color:var(--mut);text-align:center}
-  .lang-select{border:none;background:var(--bg);border-radius:9px;padding:6px 10px;font-family:var(--sans);font-size:12.5px;color:var(--ink);cursor:pointer}
-  .c-goto,.c-press{background:#fff4e5;color:#c2410c}
-  .c-assert_text,.c-assert_value,.c-assert_checked{background:#e6f6f4;color:#0f766e}
-  .sheet{margin:0 18px 12px;background:var(--card);border-radius:var(--radius);padding:6px 14px;box-shadow:0 1px 3px rgba(0,0,0,.05);position:sticky;top:0;z-index:5}
-  .row{display:flex;align-items:center;padding:10px 0;border-bottom:1px solid var(--line)}
-  .row:last-child{border-bottom:none}
-  #rowClass{padding:7px 0}
-  #rowWaitStyle{border-bottom:none}
-  #rowState{border-bottom:none}
-  #rowTimeout{border-top:1px solid var(--line)}
-  .row label.k{font-size:13.5px;color:var(--ink);flex:1;font-weight:450}
-  .pillgroup{display:flex;flex-wrap:wrap;background:var(--bg);border-radius:9px;padding:2px}
-  .pillgroup label{position:relative;cursor:pointer}
-  .pillgroup input{position:absolute;opacity:0}
-  .pillgroup span{display:block;padding:6px 11px;font-size:12px;border-radius:7px;color:var(--mut);transition:.18s;font-weight:500;white-space:nowrap}
-  .pillgroup label:has(input:checked) span{background:var(--card);color:var(--ink);box-shadow:0 1px 3px rgba(0,0,0,.1)}
-  #selectorGroup{gap:8px;background:#eef0f3;padding:8px;border-radius:14px}
-  #selectorGroup span{background:#ffffff;border:1px solid #d3d6dd;color:#4b5563;font-weight:650;padding:7px 14px;border-radius:9px}
-  #selectorGroup label:has(input:checked) span{
-    background:var(--np-red);
-    color:#fff;
-    border-color:var(--np-red);
-    box-shadow:none;
-  }
-  #selectorLabel{font-weight:650;color:var(--nth-black)}
-  .cls-input,.num{border:none;background:var(--bg);border-radius:9px;padding:6px 10px;font-family:var(--mono);font-size:12px;color:var(--ink);text-align:right}
-  .cls-input{flex:0 0 128px;text-align:left}
-  .num{width:84px}
-  .scroll{display:none}
-  .sec{font-size:12px;color:var(--mut);font-weight:600;text-transform:uppercase;letter-spacing:.4px;margin:6px 4px 8px}
-  .empty{display:none}
-  .empty b{color:var(--rec)}
-  .step{background:var(--card);border-radius:var(--radius);padding:14px;margin-bottom:10px;box-shadow:0 1px 3px rgba(0,0,0,.05);animation:rise .25s cubic-bezier(.2,.8,.2,1)}
-  @keyframes rise{from{opacity:0;transform:translateY(6px)}}
-  .step.detect{outline:2px solid var(--acc);outline-offset:-1px}
-  .step-top{display:flex;align-items:center;gap:9px;margin-bottom:9px}
-  .chip{font-size:11px;font-weight:700;padding:3px 9px;border-radius:7px;letter-spacing:.2px}
-  .c-click{background:var(--acc-soft);color:var(--acc)}
-  .c-fill,.c-fill_rich{background:#e7faec;color:var(--green)}
-  .c-check,.c-uncheck,.c-select{background:#f6ebfb;color:var(--purple)}
-  .c-detect{background:var(--acc-soft);color:var(--acc)}
-  .num-badge{margin-left:auto;font-size:12px;color:var(--mut)}
-  .del{border:none;background:none;color:var(--mut);font-size:18px;cursor:pointer;padding:0 2px;line-height:1}
-  .del:active{color:var(--rec)}
-  .sel{font-family:var(--mono);font-size:12px;color:var(--ink);line-height:1.5;word-break:break-all;background:var(--bg);border-radius:9px;padding:8px 10px}
-  .frame-tag{display:inline-block;font-family:var(--sans);font-size:11px;color:var(--purple);background:#f6ebfb;border-radius:6px;padding:1px 7px;margin-bottom:7px;font-weight:600}
-  .ctrls{display:flex;gap:7px;margin-top:10px;flex-wrap:wrap}
-  .ctrls select{flex:1;min-width:90px;border:none;background:var(--bg);border-radius:9px;padding:8px 9px;font-family:var(--sans);font-size:12px;color:var(--ink);cursor:pointer}
-  .detect-toggle{display:flex;align-items:center;gap:7px;margin-top:10px;padding-top:10px;border-top:1px solid var(--line)}
-  .detect-toggle span{font-size:12.5px;color:var(--ink);flex:1}
-  .sw{position:relative;width:42px;height:25px;flex-shrink:0}
+  .brand{display:flex;flex-direction:column;min-width:0}
+  .title{font-size:15px;font-weight:700;letter-spacing:-.2px;white-space:nowrap}
+  .sub{display:flex;align-items:center;gap:6px;font-size:11px;color:var(--muted)}
+  .ver{font-weight:700;color:var(--brand);background:var(--brand-soft);border-radius:999px;padding:0 7px;font-size:10.5px}
+  .status{margin-left:auto;display:flex;align-items:center;gap:7px;padding:5px 10px;border-radius:999px;
+    background:var(--surface);border:1px solid var(--line);font-size:11.5px;font-weight:600;color:var(--ink-2);
+    max-width:55%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;box-shadow:var(--shadow)}
+  .pulse{width:8px;height:8px;border-radius:50%;background:var(--muted);flex-shrink:0}
+  .pulse.on{background:var(--rec);box-shadow:0 0 0 0 rgba(239,68,68,.6);animation:ping 1.4s infinite}
+  @keyframes ping{0%{box-shadow:0 0 0 0 rgba(239,68,68,.55)}70%{box-shadow:0 0 0 7px rgba(239,68,68,0)}100%{box-shadow:0 0 0 0 rgba(239,68,68,0)}}
+  #statusTxt{overflow:hidden;text-overflow:ellipsis}
+
+  /* ---------- main controls ---------- */
+  .controls{padding:0 14px 10px;display:flex;flex-direction:column;gap:8px}
+  .primary{display:grid;grid-template-columns:1.25fr 1fr 1fr;gap:8px}
+  .pbtn{display:flex;align-items:center;justify-content:center;gap:7px;height:42px;border:none;border-radius:12px;
+    font-size:13.5px;font-weight:700;cursor:pointer;transition:transform .12s,filter .15s,background .2s,box-shadow .2s;letter-spacing:-.1px}
+  .pbtn:active{transform:scale(.97)}
+  .pbtn:disabled{opacity:.45;cursor:not-allowed}
+  #rec{background:var(--rec);color:#fff;box-shadow:0 6px 16px -6px rgba(239,68,68,.65)}
+  #rec.on{background:var(--ink);color:var(--surface);box-shadow:none}
+  #pause{background:var(--surface);border:1px solid var(--line-2);color:var(--ink-2)}
+  #pause.active{background:var(--warn);border-color:var(--warn);color:#fff}
+  #play{background:var(--brand);color:#fff;box-shadow:0 6px 16px -6px rgba(46,173,51,.65)}
+  #play.running{background:var(--ink);color:var(--surface);box-shadow:none}
+  .pbtn:hover:not(:disabled){filter:brightness(1.06)}
+
+  .tools{display:grid;grid-template-columns:repeat(5,1fr);gap:6px}
+  .tbtn{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;padding:8px 4px 7px;
+    border-radius:var(--r-sm);border:1px solid var(--line);background:var(--surface);cursor:pointer;
+    font-size:10.5px;font-weight:600;color:var(--ink-2);transition:all .15s;text-align:center;line-height:1.15;min-height:54px}
+  .tbtn svg{color:var(--muted);transition:color .15s}
+  .tbtn:hover{border-color:var(--line-2);background:var(--surface-2)}
+  .tbtn:hover svg{color:var(--ink)}
+  .tbtn:active{transform:scale(.97)}
+  #pick:hover svg{color:var(--violet)} #detect:hover svg{color:var(--blue)} #isVisible:hover svg{color:var(--brand)}
+  #clear:hover{border-color:var(--rec)} #clear:hover svg{color:var(--rec)}
+  .tbtn.armed{background:var(--blue);border-color:var(--blue);color:#fff;animation:armed 1.2s ease-in-out infinite}
+  .tbtn.armed svg{color:#fff}
+  @keyframes armed{50%{box-shadow:0 0 0 4px rgba(37,99,235,.25)}}
+
+  /* ---------- settings ---------- */
+  .card{margin:0 14px 10px;background:var(--surface);border:1px solid var(--line);border-radius:var(--r);box-shadow:var(--shadow)}
+  .setting{padding:10px 12px}
+  .setting + .setting{border-top:1px solid var(--line)}
+  .lbl-row{display:flex;align-items:center;justify-content:space-between;margin-bottom:7px}
+  .lbl-k{font-size:11px;font-weight:700;letter-spacing:.5px;text-transform:uppercase;color:var(--muted)}
+  .lbl-h{font-size:11px;color:var(--muted)}
+  .chips{display:flex;flex-wrap:wrap;gap:5px}
+  .chips label{position:relative;cursor:pointer}
+  .chips input{position:absolute;opacity:0;pointer-events:none}
+  .chips span{display:block;padding:5px 10px;border-radius:999px;border:1px solid var(--line-2);font-size:11.5px;
+    font-weight:600;color:var(--ink-2);background:var(--surface);transition:all .15s;font-family:var(--mono)}
+  .chips label:hover span{border-color:var(--ink-2)}
+  .chips input:checked + span{background:var(--ink);border-color:var(--ink);color:var(--surface)}
+  .chips input:focus-visible + span{outline:2px solid var(--blue);outline-offset:2px}
+  .select-wrap{position:relative}
+  .select-wrap svg{position:absolute;right:10px;top:50%;transform:translateY(-50%);pointer-events:none;color:var(--muted)}
+  .lang-select{width:100%;appearance:none;-webkit-appearance:none;border:1px solid var(--line-2);background:var(--surface-2);
+    color:var(--ink);border-radius:var(--r-sm);padding:8px 32px 8px 11px;font-size:12.5px;font-weight:600;cursor:pointer;font-family:inherit}
+  .lang-select:focus{outline:2px solid var(--blue);outline-offset:1px}
+
+  /* ---------- tabs ---------- */
+  .tabs{display:flex;gap:2px;margin:0 14px;padding:3px;background:var(--surface);border:1px solid var(--line);border-radius:12px;box-shadow:var(--shadow)}
+  .tab{flex:1;display:flex;align-items:center;justify-content:center;gap:5px;border:none;background:none;cursor:pointer;
+    padding:7px 4px;border-radius:9px;font-size:11.5px;font-weight:700;color:var(--muted);transition:all .15s;white-space:nowrap}
+  .tab:hover{color:var(--ink)}
+  .tab.active{background:var(--ink);color:var(--surface)}
+  .badge{min-width:16px;height:16px;padding:0 5px;border-radius:999px;font-size:10px;line-height:16px;font-weight:700;
+    background:var(--line);color:var(--ink-2)}
+  .tab.active .badge{background:rgba(255,255,255,.2);color:inherit}
+  .dot{width:7px;height:7px;border-radius:50%;display:none}
+  .dot.ok{display:inline-block;background:var(--brand)} .dot.bad{display:inline-block;background:var(--rec)}
+  .dot.run{display:inline-block;background:var(--warn);animation:blink 1s infinite}
+  @keyframes blink{50%{opacity:.3}}
+
+  .panes{flex:1;min-height:0;overflow:auto;padding:10px 14px 16px}
+  .pane{display:none;flex-direction:column;gap:10px}
+  .pane.active{display:flex;animation:fade .18s ease-out}
+  @keyframes fade{from{opacity:0;transform:translateY(3px)}}
+
+  /* ---------- code blocks ---------- */
+  .codebox{background:var(--code-bg);border:1px solid var(--code-line);border-radius:var(--r);overflow:hidden;display:flex;flex-direction:column;box-shadow:var(--shadow)}
+  .codebar{display:flex;align-items:center;gap:6px;padding:8px 8px 8px 12px;background:var(--code-top);border-bottom:1px solid var(--code-line)}
+  .lights{display:flex;gap:5px;margin-right:4px}
+  .lights i{width:9px;height:9px;border-radius:50%;background:#ff5f57}.lights i:nth-child(2){background:#febc2e}.lights i:nth-child(3){background:#28c840}
+  .fn{flex:1;font-family:var(--mono);font-size:11.5px;color:var(--code-mut);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .cbtn{display:inline-flex;align-items:center;gap:5px;border:1px solid #30363d;background:#21262d;color:#e6edf3;
+    border-radius:8px;padding:5px 9px;font-size:11.5px;font-weight:600;cursor:pointer;transition:all .15s}
+  .cbtn:hover{background:#30363d}
+  .cbtn.primary{background:var(--brand);border-color:var(--brand);color:#fff}
+  .cbtn.primary:hover{filter:brightness(1.08)}
+  .cbtn.danger:hover{border-color:#f85149;color:#ffa198}
+  .cbtn.icon{padding:5px 7px}
+  pre{margin:0;padding:12px 14px 14px;font-family:var(--mono);font-size:11.8px;line-height:1.65;color:var(--code-ink);
+    white-space:pre;overflow:auto;min-height:140px;tab-size:4}
+  .codebox.expanded pre{max-height:none!important}
+  .wrap pre{white-space:pre-wrap;word-break:break-word}
+  .kw{color:#ff7b72}.str{color:#a5d6ff}.cls{color:#d2a8ff}.cm{color:#8b949e;font-style:italic}
+
+  /* ---------- steps ---------- */
+  .scroll{display:flex;flex-direction:column;gap:6px}
+  .empty{display:flex;flex-direction:column;align-items:center;text-align:center;gap:8px;padding:28px 16px;color:var(--muted);
+    background:var(--surface);border:1px dashed var(--line-2);border-radius:var(--r)}
+  .empty b{color:var(--ink)}
+  .empty svg{color:var(--line-2)}
+  .step{display:grid;grid-template-columns:22px 1fr auto;gap:2px 8px;align-items:start;background:var(--surface);
+    border:1px solid var(--line);border-radius:12px;padding:9px 8px 9px 10px;animation:fade .2s ease-out}
+  .step.detect{border-color:var(--blue);box-shadow:0 0 0 1px var(--blue) inset}
+  .idx{font-family:var(--mono);font-size:10.5px;color:var(--muted);padding-top:2px}
+  .step-main{min-width:0;display:flex;flex-direction:column;gap:5px}
+  .step-top{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+  .chip{font-size:10.5px;font-weight:700;padding:2px 7px;border-radius:6px;letter-spacing:.2px;font-family:var(--mono)}
+  .c-click{background:var(--blue-soft);color:var(--blue)}
+  .c-fill,.c-fill_rich{background:var(--brand-soft);color:var(--brand)}
+  .c-check,.c-uncheck,.c-select{background:var(--violet-soft);color:var(--violet)}
+  .c-goto,.c-press,.c-new_page{background:#fff4e5;color:#c2410c}
+  .c-detect,.c-is_visible,.c-pick{background:var(--blue-soft);color:var(--blue)}
+  .c-assert_text,.c-assert_value,.c-assert_checked,.c-assert_visible{background:var(--brand-soft);color:var(--brand)}
+  @media (prefers-color-scheme: dark){.c-goto,.c-press,.c-new_page{background:#3a2410;color:#fdba74}}
+  .ptag,.frame-tag{font-size:10px;font-weight:700;padding:1px 6px;border-radius:6px;background:var(--surface-2);border:1px solid var(--line);color:var(--muted)}
+  .frame-tag{color:var(--violet)}
+  .sel{font-family:var(--mono);font-size:11.2px;color:var(--ink-2);word-break:break-all;background:var(--surface-2);
+    border-radius:7px;padding:5px 7px}
+  .val{font-family:var(--mono);font-size:11px;color:var(--brand)}
+  .ctrls{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+  .ctrls select{border:1px solid var(--line);background:var(--surface-2);color:var(--ink-2);border-radius:7px;padding:3px 6px;font-size:11px;font-family:inherit}
+  .detect-toggle{display:flex;align-items:center;gap:6px;font-size:11px;color:var(--muted);cursor:pointer}
+  .sw{position:relative;width:28px;height:16px;flex-shrink:0}
   .sw input{opacity:0;width:0;height:0}
-  .sw .track{position:absolute;inset:0;background:#e3e3e8;border-radius:25px;transition:.22s;cursor:pointer}
-  .sw .track:before{content:"";position:absolute;width:21px;height:21px;left:2px;top:2px;background:#fff;border-radius:50%;transition:.22s;box-shadow:0 1px 3px rgba(0,0,0,.25)}
-  .sw input:checked + .track{background:var(--acc)}
-  .sw input:checked + .track:before{transform:translateX(17px)}
-  .snaps-wrap{margin:0 18px 12px;display:flex;flex-direction:column;gap:10px;max-height:72vh;overflow:auto}
-  .out{position:relative;background:#0f172a;border:1px solid #1e293b;display:flex;flex-direction:column;min-height:430px;max-height:none;margin:0;border-radius:14px;box-shadow:0 6px 18px rgba(2,6,23,.22);overflow:auto}
-  .out.expanded{max-height:82vh}
-  .out-top{display:flex;align-items:center;gap:8px;padding:11px 14px 10px;background:#111827;border-bottom:1px solid #1f2937}
-  .out-top .fn{font-family:var(--mono);font-size:12px;color:#93c5fd;flex:1}
-  .out-top button{border:none;border-radius:9px;padding:7px 14px;font-size:12.5px;font-weight:600;font-family:var(--sans);cursor:pointer;transition:transform .12s}
-  .out-top button:active{transform:scale(.95)}
-  .b-size{background:#334155;color:#fff}
-  .b-copy{background:var(--acc);color:#fff}
-  .b-dl{background:#e5e7eb;color:#111827}
-  pre{flex:1;overflow:auto;padding:12px 14px 16px;margin:0;font-size:12px;line-height:1.6;font-family:var(--mono);white-space:pre;color:#e2e8f0;min-height:240px}
-  .aux-snaps{margin:0;display:grid;gap:10px}
-  .aux-card{background:#0b1220;border:1px solid #243043;border-radius:12px;overflow:auto;min-height:180px;max-height:34vh}
-  .aux-card.expanded{max-height:58vh}
-  .aux-top{display:flex;align-items:center;gap:8px;padding:8px 12px;font-family:var(--mono);font-size:11px;color:#93c5fd;background:#111827;border-bottom:1px solid #1f2937}
-  .aux-title{flex:1}
-  .aux-top button{border:none;border-radius:7px;padding:4px 8px;font-size:10px;font-weight:700;font-family:var(--mono);cursor:pointer}
-  .aux-size{background:#475569;color:#fff}
-  .aux-copy{background:#2563eb;color:#fff}
-  .aux-clear{background:#ef4444;color:#fff}
-  .aux-card pre{max-height:300px;overflow:auto;white-space:pre-wrap;word-break:break-word;min-height:120px}
-  .aux-card.expanded pre{max-height:520px}
-  #pickCode{color:#d1d5db}
-  .kw{color:#c586c0}.str{color:#ce9178}.cls{color:#4ec9b0}.cm{color:#6a9955}
-  ::-webkit-scrollbar{width:7px;height:7px}
-  ::-webkit-scrollbar-thumb{background:#d0d0d5;border-radius:4px}
+  .sw .track{position:absolute;inset:0;background:var(--line-2);border-radius:16px;transition:.2s;cursor:pointer}
+  .sw .track:before{content:"";position:absolute;width:12px;height:12px;left:2px;top:2px;background:#fff;border-radius:50%;transition:.2s}
+  .sw input:checked + .track{background:var(--blue)}
+  .sw input:checked + .track:before{transform:translateX(12px)}
+  .del{border:none;background:none;color:var(--muted);cursor:pointer;width:24px;height:24px;border-radius:7px;display:grid;place-items:center}
+  .del:hover{background:var(--rec-soft);color:var(--rec)}
+
+  /* ---------- replay ---------- */
+  .replay-log{list-style:none;padding:8px 12px 12px;font-family:var(--mono);font-size:11.5px;line-height:1.75;color:var(--code-ink)}
+  .replay-log li{display:flex;gap:8px;align-items:baseline}
+  .replay-log .ok{color:#3fb950}.replay-log .bad{color:#f85149}.replay-log .run{color:#d29922}.replay-log .wait{color:#484f58}
+  .replay-log .msg{color:#ffa198;word-break:break-word;white-space:normal}
+  .card-title{font-size:11px;font-weight:700;letter-spacing:.5px;text-transform:uppercase;color:var(--muted);padding:2px 2px 0}
+
+  /* ---------- toast ---------- */
+  .toast{position:fixed;left:50%;bottom:16px;transform:translate(-50%,20px);opacity:0;pointer-events:none;
+    background:var(--ink);color:var(--surface);padding:8px 14px;border-radius:999px;font-size:12px;font-weight:600;
+    box-shadow:0 8px 24px rgba(0,0,0,.25);transition:all .22s;display:flex;align-items:center;gap:6px}
+  .toast.show{opacity:1;transform:translate(-50%,0)}
+
+  ::-webkit-scrollbar{width:8px;height:8px}
+  ::-webkit-scrollbar-thumb{background:var(--line-2);border-radius:8px;border:2px solid transparent;background-clip:padding-box}
+  pre::-webkit-scrollbar-thumb{background:#30363d;border:2px solid var(--code-bg)}
+  :focus-visible{outline:2px solid var(--blue);outline-offset:2px}
 </style>
 </head>
 <body>
-  <div class="top">
-    <div class="logo"><img src="icons/playwright-logo.png" alt="Playwright logo" /></div>
-    <div class="title">Playwright CRX Pro <span class="ver" id="ver">1.9.0 beta 1</span></div>
-    <div class="status"><span class="pulse" id="pulse"></span><span id="statusTxt">Idle</span></div>
-  </div>
-  <div class="recwrap">
-    <div class="rec-actions">
-      <button class="rec" id="rec">Record</button>
-      <button class="pause-btn" id="pause" disabled>Pause</button>
-      <button class="play-btn" id="play" title="Replay the recorded steps in this tab">▶ Play</button>
+  <!-- header -->
+  <header class="hdr">
+    <div class="logo"><img src="icons/playwright-logo.png" alt="" /></div>
+    <div class="brand">
+      <div class="title">Playwright CRX Pro</div>
+      <div class="sub"><span class="ver" id="ver">1.0.0</span><span>Recorder</span></div>
     </div>
-    <div class="mini"><button id="pick">Pick element</button><button id="detect">Detect state</button><button id="isVisible">Is visible</button><button id="clear">Clear all</button></div>
-    <div class="mini"><button id="assertVisible">Assert visible</button><button id="assertText">Assert text</button><button id="assertValue">Assert value</button><button id="undo">Undo</button></div>
-    <div class="hint">Alt+Shift+R record · Alt+Shift+C pick · Esc cancels · right-click → Playwright CRX Pro</div>
-  </div>
-  <div class="sheet">
-    <div class="row">
-      <label class="k" id="selectorLabel">Selector</label>
-      <div class="pillgroup" id="selectorGroup">
+    <div class="status" title="Status"><span class="pulse" id="pulse"></span><span id="statusTxt">Idle</span></div>
+  </header>
+
+  <!-- main controls -->
+  <section class="controls">
+    <div class="primary">
+      <button class="pbtn" id="rec" title="Start / stop recording (Alt+Shift+R)">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="12" r="8"/></svg><span class="lbl">Record</span>
+      </button>
+      <button class="pbtn" id="pause" disabled title="Pause / resume recording">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/></svg><span class="lbl">Pause</span>
+      </button>
+      <button class="pbtn" id="play" title="Replay the recorded steps in this tab">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M7 4.5v15a1 1 0 0 0 1.5.86l12.5-7.5a1 1 0 0 0 0-1.72L8.5 3.64A1 1 0 0 0 7 4.5z"/></svg><span class="lbl">Play</span>
+      </button>
+    </div>
+    <div class="tools">
+      <button class="tbtn" id="pick" title="Click an element to copy its HTML (Alt+Shift+C)">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3l7.07 16.97 2.51-7.39 7.39-2.51L3 3z"/><path d="M13 13l6 6"/></svg><span class="lbl">Pick</span>
+      </button>
+      <button class="tbtn" id="detect" title="Click an element to create detect_state()">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="4"/><path d="M12 3v2M12 19v2M3 12h2M19 12h2"/></svg><span class="lbl">Detect</span>
+      </button>
+      <button class="tbtn" id="isVisible" title="Click an element to create is_visible()">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg><span class="lbl">Visible</span>
+      </button>
+      <button class="tbtn" id="undo" title="Remove the last step">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 14L4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"/></svg><span class="lbl">Undo</span>
+      </button>
+      <button class="tbtn" id="clear" title="Remove all steps">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="M19 6l-1 14H6L5 6"/></svg><span class="lbl">Clear</span>
+      </button>
+    </div>
+  </section>
+
+  <!-- settings -->
+  <section class="card">
+    <div class="setting">
+      <div class="lbl-row"><span class="lbl-k">Selector</span><span class="lbl-h">preferred locator</span></div>
+      <div class="chips" id="selectorGroup">
         <label><input type="radio" name="sel" value="text" checked><span>text</span></label>
         <label><input type="radio" name="sel" value="role"><span>role</span></label>
         <label><input type="radio" name="sel" value="label"><span>label</span></label>
@@ -172,49 +251,131 @@
         <label><input type="radio" name="sel" value="xpath"><span>xpath</span></label>
       </div>
     </div>
-    <div class="row">
-      <label class="k" for="lang">Language</label>
-      <select class="lang-select" id="lang">
-        <option value="python-pytest">Python · Pytest</option>
-        <option value="python">Python · Library</option>
-        <option value="python-async">Python · Async</option>
-        <option value="playwright-test">Playwright Test (TS/JS)</option>
-        <option value="java">Java</option>
-        <option value="csharp">C# · NUnit</option>
-      </select>
+    <div class="setting">
+      <div class="lbl-row"><label class="lbl-k" for="lang">Language</label><span class="lbl-h" id="langHint"></span></div>
+      <div class="select-wrap">
+        <select class="lang-select" id="lang">
+          <optgroup label="Playwright · Python">
+            <option value="python-pytest">Python · Pytest</option>
+            <option value="python">Python · Library</option>
+            <option value="python-async">Python · Async</option>
+          </optgroup>
+          <optgroup label="Playwright · JavaScript / TypeScript">
+            <option value="playwright-test-ts">Playwright Test · TypeScript</option>
+            <option value="playwright-test-js">Playwright Test · JavaScript</option>
+            <option value="javascript">JavaScript · Library</option>
+          </optgroup>
+          <optgroup label="Playwright · Java / .NET">
+            <option value="java-junit">Java · JUnit 5</option>
+            <option value="java">Java · Library</option>
+            <option value="csharp">C# · NUnit</option>
+          </optgroup>
+          <optgroup label="Selenium WebDriver">
+            <option value="selenium-python">Selenium · Python</option>
+            <option value="selenium-java">Selenium · Java JUnit 5</option>
+          </optgroup>
+        </select>
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>
+      </div>
     </div>
-    <div class="row">
-      <label class="k" for="testIdAttr">Test id attribute</label>
-      <input class="cls-input" id="testIdAttr" value="data-testid" spellcheck="false" />
-    </div>
-  </div>
-  <div class="snaps-wrap" id="snapsWrap">
-    <div class="out" id="mainOut">
-      <div class="out-top"><span class="fn" id="fnLabel">code_snap.py</span><button class="b-size" id="growMain">Size +</button><button class="b-dl" id="download">Save</button><button class="b-copy" id="copy">Copy</button></div>
-      <pre id="code"></pre>
-    </div>
-    <div class="aux-snaps">
-      <div class="aux-card replay-card" id="replayCard" hidden>
-        <div class="aux-top"><span class="aux-title" id="replayTitle">replay</span><button class="aux-clear" id="closeReplay">Close</button></div>
+  </section>
+
+  <!-- tabs -->
+  <nav class="tabs" role="tablist">
+    <button class="tab active" data-tab="code" role="tab">Code</button>
+    <button class="tab" data-tab="steps" role="tab">Steps <span class="badge" id="stepCount">0</span></button>
+    <button class="tab" data-tab="replay" role="tab">Replay <span class="dot" id="replayDot"></span></button>
+    <button class="tab" data-tab="pom" role="tab">POM</button>
+    <button class="tab" data-tab="pick" role="tab">Pick</button>
+  </nav>
+
+  <main class="panes">
+    <!-- code -->
+    <section class="pane active" data-pane="code">
+      <div class="codebox" id="mainOut">
+        <div class="codebar">
+          <span class="lights"><i></i><i></i><i></i></span>
+          <span class="fn" id="fnLabel">test_example.py</span>
+          <button class="cbtn icon" id="growMain" title="Taller / shorter"><span class="lbl">Size +</span></button>
+          <button class="cbtn" id="download" title="Download file">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12M7 10l5 5 5-5M5 21h14"/></svg><span class="lbl">Save</span>
+          </button>
+          <button class="cbtn primary" id="copy" title="Copy code">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg><span class="lbl">Copy</span>
+          </button>
+        </div>
+        <pre id="code"></pre>
+      </div>
+    </section>
+
+    <!-- steps -->
+    <section class="pane" data-pane="steps">
+      <div class="scroll" id="scroll">
+        <div class="empty" id="empty">
+          <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="3.5" fill="currentColor"/></svg>
+          <div><b>No steps yet</b></div>
+          <div>Press <b>Record</b> and use the website — every click, input and new tab shows up here.</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- replay -->
+    <section class="pane" data-pane="replay">
+      <div class="empty" id="replayEmpty">
+        <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M10 8.5v7l5.5-3.5z" fill="currentColor"/></svg>
+        <div><b>Nothing replayed yet</b></div>
+        <div>Press <b>Play</b> to run the recorded steps in this tab and see a result for every step.</div>
+      </div>
+      <div class="codebox" id="replayCard" hidden>
+        <div class="codebar">
+          <span class="fn" id="replayTitle">replay</span>
+          <button class="cbtn danger" id="closeReplay"><span class="lbl">Clear</span></button>
+        </div>
         <ol class="replay-log" id="replayLog"></ol>
       </div>
-      <div class="aux-card" id="detectCard">
-        <div class="aux-top"><span class="aux-title">detect_state snap</span><button class="aux-size" id="growDetect">Size +</button><button class="aux-copy" id="copyDetect">Copy</button><button class="aux-clear" id="clearDetect">Clear</button></div>
+    </section>
+
+    <!-- POM snaps -->
+    <section class="pane" data-pane="pom">
+      <div class="card-title">detect_state() — from the Detect button</div>
+      <div class="codebox" id="detectCard">
+        <div class="codebar">
+          <span class="fn">detect_state.py</span>
+          <button class="cbtn icon" id="growDetect"><span class="lbl">Size +</span></button>
+          <button class="cbtn danger" id="clearDetect"><span class="lbl">Clear</span></button>
+          <button class="cbtn primary" id="copyDetect"><span class="lbl">Copy</span></button>
+        </div>
         <pre id="detectCode"></pre>
       </div>
-      <div class="aux-card" id="visibleCard">
-        <div class="aux-top"><span class="aux-title">is_visible snap</span><button class="aux-size" id="growVisible">Size +</button><button class="aux-copy" id="copyVisible">Copy</button><button class="aux-clear" id="clearVisible">Clear</button></div>
+      <div class="card-title">is_visible() — from the Visible button</div>
+      <div class="codebox" id="visibleCard">
+        <div class="codebar">
+          <span class="fn">is_visible.py</span>
+          <button class="cbtn icon" id="growVisible"><span class="lbl">Size +</span></button>
+          <button class="cbtn danger" id="clearVisible"><span class="lbl">Clear</span></button>
+          <button class="cbtn primary" id="copyVisible"><span class="lbl">Copy</span></button>
+        </div>
         <pre id="isVisibleCode"></pre>
       </div>
-      <div class="aux-card" id="pickCard">
-        <div class="aux-top"><span class="aux-title">pick element HTML (auto-copied)</span><button class="aux-size" id="growPick">Size +</button><button class="aux-copy" id="copyPick">Copy</button><button class="aux-clear" id="clearPick">Clear</button></div>
+    </section>
+
+    <!-- picked HTML -->
+    <section class="pane" data-pane="pick">
+      <div class="card-title">HTML of picked elements (also copied to the clipboard)</div>
+      <div class="codebox wrap" id="pickCard">
+        <div class="codebar">
+          <span class="fn">picked.html</span>
+          <button class="cbtn icon" id="growPick"><span class="lbl">Size +</span></button>
+          <button class="cbtn danger" id="clearPick"><span class="lbl">Clear</span></button>
+          <button class="cbtn primary" id="copyPick"><span class="lbl">Copy</span></button>
+        </div>
         <pre id="pickCode"></pre>
       </div>
-    </div>
-  </div>
-  <div class="scroll" id="scroll">
-    <div class="empty" id="empty"></div>
-  </div>
+    </section>
+  </main>
+
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+
   <script src="codegen.js"></script>
   <script src="panel.js"></script>
 </body>
